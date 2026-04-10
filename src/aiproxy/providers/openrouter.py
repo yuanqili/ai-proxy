@@ -1,7 +1,8 @@
 """OpenRouter provider — OpenAI-compatible Bearer auth, /api/v1/ prefix."""
 from __future__ import annotations
 
-from aiproxy.providers.base import Provider
+from aiproxy.providers.base import Provider, Usage
+from aiproxy.providers.openai import OpenAIProvider
 
 
 class OpenRouterProvider(Provider):
@@ -20,3 +21,18 @@ class OpenRouterProvider(Provider):
         # Optional but helpful for OpenRouter's app rankings
         headers.setdefault("http-referer", "https://github.com/ai-proxy")
         return headers
+
+    def parse_usage(
+        self,
+        *,
+        is_streaming: bool,
+        resp_body: bytes | None,
+        chunks: list[bytes] | None,
+    ) -> Usage | None:
+        # OpenRouter is OpenAI-compatible — delegate.
+        dummy = OpenAIProvider(base_url="", api_key="")
+        return dummy.parse_usage(
+            is_streaming=is_streaming,
+            resp_body=resp_body,
+            chunks=chunks,
+        )

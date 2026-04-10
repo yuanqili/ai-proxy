@@ -1,7 +1,7 @@
 """Provider abstraction.
 
 A Provider encapsulates everything that differs between upstream vendors:
-URL prefix, auth header injection, and (in Phase 2) usage parsing.
+URL prefix, auth header injection, and usage parsing.
 """
 from __future__ import annotations
 
@@ -16,6 +16,29 @@ class Usage:
     output_tokens: int | None = None
     cached_tokens: int | None = None
     reasoning_tokens: int | None = None
+
+
+def iter_sse_data_events(chunks: list[bytes]) -> list[dict]:
+    """Parse a list of raw SSE chunks into a list of JSON data events.
+
+    Handles OpenAI-style 'data: {...}\n\n' framing. Skips '[DONE]' and
+    non-JSON lines. Concatenates chunks first because chunk boundaries
+    may split an event mid-line.
+    """
+    blob = b"".join(chunks).decode("utf-8", errors="replace")
+    events: list[dict] = []
+    for line in blob.split("\n"):
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            events.append(json.loads(payload))
+        except json.JSONDecodeError:
+            continue
+    return events
 
 
 class Provider(ABC):
@@ -55,3 +78,19 @@ class Provider(ABC):
         except (json.JSONDecodeError, UnicodeDecodeError):
             return False
         return isinstance(obj, dict) and bool(obj.get("stream"))
+
+    def parse_usage(
+        self,
+        *,
+        is_streaming: bool,
+        resp_body: bytes | None,
+        chunks: list[bytes] | None,
+    ) -> Usage | None:
+        """Extract token counts from the upstream response.
+
+        For non-streaming: `resp_body` is the full response JSON.
+        For streaming: `chunks` is the list of raw bytes from upstream.
+        Provider-specific subclasses should override this.
+        Default returns None (no parsing).
+        """
+        return None
