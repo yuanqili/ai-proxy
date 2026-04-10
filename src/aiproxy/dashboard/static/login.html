@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>AI Proxy — Login</title>
+<style>
+  :root { --bg:#0e1116; --panel:#161b22; --border:#2d333b; --text:#c9d1d9; --accent:#58a6ff; --err:#f85149; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, Segoe UI, sans-serif;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 32px;
+    width: 360px;
+  }
+  h1 { font-size: 18px; margin: 0 0 20px 0; }
+  label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 6px; }
+  input {
+    width: 100%; padding: 10px 12px;
+    background: #0a0d12; border: 1px solid var(--border); border-radius: 4px;
+    color: var(--text); font-family: ui-monospace, monospace;
+    font-size: 13px;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  button {
+    width: 100%; padding: 10px; margin-top: 14px;
+    background: var(--accent); color: #0a0d12;
+    border: 0; border-radius: 4px;
+    font-weight: 600; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.1); }
+  .err { color: var(--err); font-size: 12px; margin-top: 10px; min-height: 16px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>AI Proxy — Sign In</h1>
+  <label for="mk">Master key</label>
+  <input id="mk" type="password" autofocus placeholder="sk-..." />
+  <button id="btn">Sign In</button>
+  <div class="err" id="err"></div>
+</div>
+<script>
+const btn = document.getElementById("btn");
+const mk  = document.getElementById("mk");
+const err = document.getElementById("err");
+async function login() {
+  err.textContent = "";
+  try {
+    const r = await fetch("/dashboard/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ master_key: mk.value }),
+      credentials: "same-origin",
+    });
+    if (r.ok) { location.href = "/dashboard/"; return; }
+    err.textContent = r.status === 401 ? "Invalid master key" : ("Error: " + r.status);
+  } catch (e) {
+    err.textContent = "Network error: " + e.message;
+  }
+}
+btn.onclick = login;
+mk.addEventListener("keydown", e => { if (e.key === "Enter") login(); });
+</script>
+</body>
+</html>

@@ -14,7 +14,14 @@ def app():
     bus = StreamBus()
     registry = RequestRegistry(bus)
     app = FastAPI()
-    app.include_router(create_dashboard_router(bus=bus, registry=registry))
+    app.include_router(create_dashboard_router(
+        bus=bus,
+        registry=registry,
+        sessionmaker=None,
+        master_key="test-key",
+        session_secret="test-secret-xxx",
+        secure_cookies=False,
+    ))
     return app, bus, registry
 
 
@@ -25,7 +32,10 @@ async def _client(app: FastAPI) -> httpx.AsyncClient:
 async def test_index_html_served(app) -> None:
     a, _, _ = app
     async with await _client(a) as c:
-        r = await c.get("/dashboard/")
+        login = await c.post("/dashboard/login", json={"master_key": "test-key"})
+        cookie = login.cookies.get("aiproxy_session")
+        # With valid cookie, index should return the HTML
+        r = await c.get("/dashboard/", cookies={"aiproxy_session": cookie})
     assert r.status_code == 200
     assert "text/html" in r.headers.get("content-type", "")
     assert "AI Proxy" in r.text
@@ -38,7 +48,9 @@ async def test_api_active_returns_snapshot(app) -> None:
         method="POST", path="/chat/completions", client_ip=None,
     ))
     async with await _client(a) as c:
-        r = await c.get("/dashboard/api/active")
+        login = await c.post("/dashboard/login", json={"master_key": "test-key"})
+        cookie = login.cookies.get("aiproxy_session")
+        r = await c.get("/dashboard/api/active", cookies={"aiproxy_session": cookie})
     assert r.status_code == 200
     data = r.json()
     assert len(data["active"]) == 1

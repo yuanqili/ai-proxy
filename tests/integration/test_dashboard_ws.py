@@ -14,13 +14,28 @@ def app():
     bus = StreamBus()
     registry = RequestRegistry(bus)
     app = FastAPI()
-    app.include_router(create_dashboard_router(bus=bus, registry=registry))
+    app.include_router(create_dashboard_router(
+        bus=bus,
+        registry=registry,
+        sessionmaker=None,
+        master_key="test-key",
+        session_secret="test-secret-xxx",
+        secure_cookies=False,
+    ))
     return app, bus, registry
 
 
-def test_ws_active_snapshot_and_start(app) -> None:
+@pytest.fixture
+def logged_in_client(app):
     a, bus, registry = app
     client = TestClient(a)
+    r = client.post("/dashboard/login", json={"master_key": "test-key"})
+    assert r.status_code == 200
+    return client, bus, registry
+
+
+def test_ws_active_snapshot_and_start(logged_in_client) -> None:
+    client, bus, registry = logged_in_client
     with client.websocket_connect("/dashboard/ws/active") as ws:
         snap = ws.receive_json()
         assert snap["type"] == "snapshot"
@@ -36,22 +51,20 @@ def test_ws_active_snapshot_and_start(app) -> None:
         assert ev["req"]["req_id"] == "live1"
 
 
-def test_ws_stream_not_found(app) -> None:
-    a, _, _ = app
-    client = TestClient(a)
+def test_ws_stream_not_found(logged_in_client) -> None:
+    client, _, _ = logged_in_client
     with client.websocket_connect("/dashboard/ws/stream/nonexistent") as ws:
         ev = ws.receive_json()
         assert ev["type"] == "not_found"
 
 
-def test_ws_stream_already_done(app) -> None:
-    a, _, registry = app
+def test_ws_stream_already_done(logged_in_client) -> None:
+    client, _, registry = logged_in_client
     registry.start(RequestMeta(
         req_id="old", provider="openai", model=None,
         method="POST", path="/p", client_ip=None,
     ))
     registry.finish("old", status="done")
-    client = TestClient(a)
     with client.websocket_connect("/dashboard/ws/stream/old") as ws:
         meta = ws.receive_json()
         assert meta["type"] == "meta"
@@ -60,15 +73,14 @@ def test_ws_stream_already_done(app) -> None:
         assert done["status"] == "done"
 
 
-def test_ws_stream_receives_chunks(app) -> None:
-    a, bus, registry = app
+def test_ws_stream_receives_chunks(logged_in_client) -> None:
+    client, bus, registry = logged_in_client
     registry.start(RequestMeta(
         req_id="streaming", provider="openai", model="gpt-4o",
         method="POST", path="/chat/completions", client_ip=None,
     ))
     registry.update("streaming", status="streaming")
 
-    client = TestClient(a)
     with client.websocket_connect("/dashboard/ws/stream/streaming") as ws:
         meta = ws.receive_json()
         assert meta["type"] == "meta"
