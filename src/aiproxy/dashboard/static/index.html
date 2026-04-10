@@ -188,6 +188,60 @@ a:hover { text-decoration: underline; }
 .status-pill.streaming, .status-pill.pending { background: rgba(210,153,34,.2); color: var(--warn); }
 .status-pill.error { background: rgba(248,81,73,.2); color: var(--err); }
 .status-pill.canceled { background: rgba(139,148,158,.2); color: var(--muted); }
+
+/* ── Timeline tab ─────────────────────────────────────────────────── */
+#timeline-page { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 16px 20px; }
+#tl-chart-wrap { flex: 1; min-height: 0; overflow: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 4px; position: relative; }
+#tl-chart-empty { color: var(--muted); font-size: 12px; padding: 24px; }
+#tl-chart { width: 100%; min-width: 800px; background: var(--bg); display: block; }
+#tl-chart .lane-bg { fill: transparent; }
+#tl-chart .lane-bg.alt { fill: rgba(255,255,255,0.02); }
+#tl-chart .lane-label { fill: var(--text); font-size: 11px; font-family: var(--mono); }
+#tl-chart .tick-label { fill: var(--muted); font-size: 10px; font-family: var(--mono); }
+#tl-chart .tick-line { stroke: var(--border); stroke-width: 1; }
+#tl-chart rect.req { cursor: pointer; rx: 1; }
+#tl-chart rect.req.done { fill: var(--ok); }
+#tl-chart rect.req.error { fill: var(--err); }
+#tl-chart rect.req.streaming { fill: var(--warn); }
+#tl-chart rect.req.canceled { fill: var(--muted); }
+#tl-chart rect.req:hover { stroke: var(--text); stroke-width: 1; }
+#tl-tooltip {
+  position: fixed; z-index: 1000; pointer-events: none;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 4px; padding: 6px 8px; font-size: 11px;
+  font-family: var(--mono); color: var(--text);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  white-space: nowrap;
+}
+
+/* ── Error banner (Overview tab) ──────────────────────────────────── */
+.error-banner {
+  margin: 0 0 12px 0;
+  padding: 10px 12px;
+  border-left: 3px solid #f85149;
+  background: #2d1115;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #f0b3b8;
+}
+.error-banner .eb-title {
+  font-weight: 600;
+  color: #f85149;
+  margin-bottom: 4px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.error-banner .eb-msg {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+}
+.error-banner pre.eb-msg {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  margin: 0;
+}
 #req-list-footer { padding: 6px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
 #req-list-count { flex: 1; }
 #load-more-btn { font-size: 11px; }
@@ -651,6 +705,7 @@ a:hover { text-decoration: underline; }
 <nav id="nav">
   <span id="nav-title">AI Proxy</span>
   <button class="nav-tab active" data-tab="requests">Requests</button>
+  <button class="nav-tab" data-tab="timeline">Timeline</button>
   <button class="nav-tab" data-tab="keys">Keys</button>
   <button class="nav-tab" data-tab="pricing">Pricing</button>
   <button class="nav-tab" data-tab="settings">Settings</button>
@@ -677,6 +732,7 @@ a:hover { text-decoration: underline; }
     </select>
     <input class="filter-input" id="req-search" type="search" placeholder="Search…" />
     <button class="btn-secondary" id="refresh-btn">Refresh</button>
+    <button class="btn-secondary" id="export-btn">Export JSON</button>
   </div>
   <div id="req-body">
     <div id="req-list-pane">
@@ -707,6 +763,38 @@ a:hover { text-decoration: underline; }
         <div class="detail-panel" id="dpanel-replay"></div>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- ── Timeline tab ───────────────────────────────────────────────────── -->
+<div class="tab-page" id="tab-timeline">
+  <div id="timeline-page">
+    <div class="page-header" style="justify-content:space-between;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <h2>Timeline</h2>
+        <select class="filter-select" id="tl-group-by">
+          <option value="model" selected>Group by model</option>
+          <option value="provider">Group by provider</option>
+          <option value="api_key_id">Group by API key</option>
+        </select>
+        <select class="filter-select" id="tl-window">
+          <option value="300">Last 5 min</option>
+          <option value="900" selected>Last 15 min</option>
+          <option value="3600">Last 1 hour</option>
+          <option value="21600">Last 6 hours</option>
+        </select>
+        <button class="btn-secondary" id="tl-refresh-btn">Refresh</button>
+        <label style="font-size:12px;display:flex;gap:4px;align-items:center;">
+          <input type="checkbox" id="tl-live" checked /> Live
+        </label>
+      </div>
+      <div id="tl-summary" style="font-size:11px;color:var(--muted);"></div>
+    </div>
+    <div id="tl-chart-wrap">
+      <div id="tl-chart-empty">No data in the selected window.</div>
+      <svg id="tl-chart" style="display:none;"></svg>
+    </div>
+    <div id="tl-tooltip" style="display:none;"></div>
   </div>
 </div>
 
@@ -765,6 +853,33 @@ a:hover { text-decoration: underline; }
       <div class="settings-row">
         <button class="btn-danger" id="strip-binaries-btn">Strip all binaries</button>
         <span style="font-size:11px;color:var(--muted)">Replaces base64-encoded images/files in all stored request/response bodies with size placeholders.</span>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h3>Database</h3>
+      <div class="settings-row" style="flex-wrap:wrap;gap:16px;align-items:flex-start;">
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:160px;">
+          <span style="font-size:11px;color:var(--muted)">File size</span>
+          <span id="db-size" style="font-family:var(--mono);">—</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:120px;">
+          <span style="font-size:11px;color:var(--muted)">Requests</span>
+          <span id="db-req-count" style="font-family:var(--mono);">—</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:120px;">
+          <span style="font-size:11px;color:var(--muted)">Chunks</span>
+          <span id="db-chunk-count" style="font-family:var(--mono);">—</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:120px;">
+          <span style="font-size:11px;color:var(--muted)">Pricing rows</span>
+          <span id="db-pricing-count" style="font-family:var(--mono);">—</span>
+        </div>
+      </div>
+      <div class="settings-row">
+        <button class="btn-secondary" id="db-refresh-btn">Refresh stats</button>
+        <button class="btn-danger" id="db-vacuum-btn">Vacuum database</button>
+        <span style="font-size:11px;color:var(--muted)">Rebuilds the SQLite file to reclaim space after deletions. Briefly holds a write lock.</span>
       </div>
     </div>
 
@@ -935,7 +1050,12 @@ function switchTab(name) {
   document.querySelectorAll(".tab-page").forEach(p => p.classList.toggle("active", p.id === "tab-" + name));
   if (name === "keys") loadKeys();
   if (name === "pricing") loadPricing();
-  if (name === "settings") loadConfig();
+  if (name === "settings") { loadConfig(); loadDbStats(); }
+  if (name === "timeline" && typeof loadTimeline === "function") {
+    loadTimeline(); tlStartPolling();
+  } else if (typeof tlStopPolling === "function") {
+    tlStopPolling();
+  }
 }
 
 /* Sign out */
@@ -1193,7 +1313,20 @@ function renderOverview(req) {
     ? ((req.first_chunk_at - req.upstream_sent_at) * 1000).toFixed(0) + "ms"
     : "—";
 
-  el.innerHTML = `<table class="meta-table">
+  let bannerHtml = "";
+  if (req.error_class) {
+    const isInternal = req.error_class === "proxy_internal";
+    const msg = req.error_message || "";
+    const msgHtml = isInternal
+      ? `<pre class="eb-msg">${escHtml(msg)}</pre>`
+      : `<div class="eb-msg">${escHtml(msg)}</div>`;
+    bannerHtml = `<div class="error-banner">
+      <div class="eb-title">⚠ ${escHtml(req.error_class)}</div>
+      ${msgHtml}
+    </div>`;
+  }
+
+  el.innerHTML = bannerHtml + `<table class="meta-table">
     ${row("Provider", escHtml(req.provider || "—"))}
     ${row("Model", escHtml(req.model || "—"))}
     ${row("Method + Endpoint", escHtml((req.method || "") + " " + (req.endpoint || "")))}
@@ -1211,8 +1344,6 @@ function renderOverview(req) {
     ${row("Cost", fmtCost(req.cost_usd))}
     ${row("Pricing ID", req.pricing_id != null ? String(req.pricing_id) : "—")}
     ${row("Binaries stripped", req.binaries_stripped ? "yes" : "no")}
-    ${req.error_class ? row("Error class", escHtml(req.error_class)) : ""}
-    ${req.error_message ? row("Error message", escHtml(req.error_message)) : ""}
   </table>`;
 }
 
@@ -1785,6 +1916,37 @@ document.getElementById("req-search").addEventListener("input", () => {
 
 document.getElementById("refresh-btn").addEventListener("click", () => loadRequests());
 
+document.getElementById("export-btn").addEventListener("click", async () => {
+  const params = new URLSearchParams();
+  const provider = document.getElementById("filter-provider").value;
+  const status   = document.getElementById("filter-status").value;
+  const search   = document.getElementById("req-search").value.trim();
+  if (provider) params.set("provider", provider);
+  if (status)   params.set("status", status);
+  if (search)   params.set("q", search);
+  const url = "/dashboard/api/requests/export" + (params.toString() ? "?" + params : "");
+  const btn = document.getElementById("export-btn");
+  btn.disabled = true;
+  btn.textContent = "Exporting…";
+  try {
+    const r = await apiFetch(url);
+    if (!r || !r.ok) return;
+    const data = await r.json();
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    a.download = `aiproxy-export-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Export JSON";
+  }
+});
+
 document.getElementById("load-more-btn").addEventListener("click", () => loadRequests(true));
 
 /* ════════════════════════════════════════════════════════════════════
@@ -1995,6 +2157,240 @@ document.getElementById("strip-binaries-btn").addEventListener("click", async ()
     setStatus("Error during strip operation.", "err");
   }
 });
+
+/* ── Database stats + vacuum ──────────────────────────────────────── */
+function fmtBytes(n) {
+  if (n == null) return "—";
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+  return (n / 1024 / 1024 / 1024).toFixed(2) + " GB";
+}
+
+async function loadDbStats() {
+  const r = await apiFetch("/dashboard/api/stats/db");
+  if (!r || !r.ok) return;
+  const d = await r.json();
+  document.getElementById("db-size").textContent = fmtBytes(d.db_size_bytes);
+  document.getElementById("db-req-count").textContent = String(d.request_count);
+  document.getElementById("db-chunk-count").textContent = String(d.chunk_count);
+  document.getElementById("db-pricing-count").textContent = String(d.pricing_count);
+}
+
+document.getElementById("db-refresh-btn").addEventListener("click", loadDbStats);
+
+document.getElementById("db-vacuum-btn").addEventListener("click", async () => {
+  if (!confirm("Run VACUUM on the database? This briefly holds a write lock.")) return;
+  const btn = document.getElementById("db-vacuum-btn");
+  btn.disabled = true;
+  btn.textContent = "Vacuuming…";
+  try {
+    const r = await apiFetch("/dashboard/api/batch/vacuum", { method: "POST" });
+    if (!r) return;
+    if (!r.ok) {
+      setStatus("Vacuum failed.", "err");
+      return;
+    }
+    const d = await r.json();
+    const saved = d.db_size_bytes_before - d.db_size_bytes_after;
+    setStatus(
+      `Vacuum complete. ${fmtBytes(d.db_size_bytes_before)} → ${fmtBytes(d.db_size_bytes_after)} (saved ${fmtBytes(Math.max(0, saved))}).`,
+      "ok",
+    );
+    await loadDbStats();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Vacuum database";
+  }
+});
+
+/* ════════════════════════════════════════════════════════════════════
+   Timeline tab
+   ════════════════════════════════════════════════════════════════════ */
+
+let tlData = null;
+let tlPollTimer = null;
+
+function tlWindowSeconds() {
+  return parseInt(document.getElementById("tl-window").value, 10);
+}
+function tlGroupBy() {
+  return document.getElementById("tl-group-by").value;
+}
+function tlLiveOn() {
+  return document.getElementById("tl-live").checked;
+}
+
+async function loadTimeline() {
+  const windowS = tlWindowSeconds();
+  const until = Date.now() / 1000;
+  const since = until - windowS;
+  const params = new URLSearchParams({
+    since: String(since),
+    until: String(until),
+    group_by: tlGroupBy(),
+  });
+  const r = await apiFetch("/dashboard/api/timeline?" + params.toString());
+  if (!r || !r.ok) return;
+  tlData = await r.json();
+  renderTimeline();
+}
+
+function tlReqColorClass(req) {
+  if (req.error_class) return "error";
+  if (req.status === "streaming") return "streaming";
+  if (req.status === "canceled") return "canceled";
+  if (req.status_code && req.status_code >= 400) return "error";
+  return "done";
+}
+
+function renderTimeline() {
+  const svg = document.getElementById("tl-chart");
+  const empty = document.getElementById("tl-chart-empty");
+  const summary = document.getElementById("tl-summary");
+  if (!tlData || tlData.lanes.length === 0) {
+    svg.style.display = "none";
+    empty.style.display = "";
+    summary.textContent = "";
+    return;
+  }
+  empty.style.display = "none";
+  svg.style.display = "";
+
+  const lanes = tlData.lanes;
+  const since = tlData.since;
+  const until = tlData.until;
+  const span = Math.max(1, until - since);
+
+  const laneH = 28;
+  const labelW = 180;
+  const topAxis = 24;
+  const bottomPad = 8;
+  const wrapW = document.getElementById("tl-chart-wrap").clientWidth || 1000;
+  const chartW = Math.max(800, wrapW - 2);
+  const plotW = chartW - labelW - 16;
+  const chartH = topAxis + lanes.length * laneH + bottomPad;
+
+  const NS = "http://www.w3.org/2000/svg";
+  svg.setAttribute("viewBox", `0 0 ${chartW} ${chartH}`);
+  svg.setAttribute("width", String(chartW));
+  svg.setAttribute("height", String(chartH));
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const TICKS = 5;
+  for (let i = 0; i <= TICKS; i++) {
+    const x = labelW + (plotW * i) / TICKS;
+    const line = document.createElementNS(NS, "line");
+    line.setAttribute("class", "tick-line");
+    line.setAttribute("x1", String(x));
+    line.setAttribute("x2", String(x));
+    line.setAttribute("y1", String(topAxis));
+    line.setAttribute("y2", String(chartH - bottomPad));
+    svg.appendChild(line);
+    const tsAt = since + (span * i) / TICKS;
+    const d = new Date(tsAt * 1000);
+    const label = document.createElementNS(NS, "text");
+    label.setAttribute("class", "tick-label");
+    label.setAttribute("x", String(x));
+    label.setAttribute("y", "16");
+    label.setAttribute("text-anchor", i === 0 ? "start" : i === TICKS ? "end" : "middle");
+    label.textContent = d.toLocaleTimeString();
+    svg.appendChild(label);
+  }
+
+  let totalReqs = 0;
+  lanes.forEach((lane, idx) => {
+    const y = topAxis + idx * laneH;
+    const bg = document.createElementNS(NS, "rect");
+    bg.setAttribute("class", "lane-bg" + (idx % 2 === 1 ? " alt" : ""));
+    bg.setAttribute("x", "0");
+    bg.setAttribute("y", String(y));
+    bg.setAttribute("width", String(chartW));
+    bg.setAttribute("height", String(laneH));
+    svg.appendChild(bg);
+
+    const label = document.createElementNS(NS, "text");
+    label.setAttribute("class", "lane-label");
+    label.setAttribute("x", "8");
+    label.setAttribute("y", String(y + laneH / 2 + 4));
+    label.textContent = lane.label.length > 22 ? lane.label.slice(0, 21) + "…" : lane.label;
+    svg.appendChild(label);
+
+    lane.requests.forEach((req) => {
+      totalReqs++;
+      const rawEnd = req.finished_at ?? until;
+      const start = Math.max(req.started_at, since);
+      const end = Math.min(Math.max(rawEnd, start), until);
+      const x = labelW + ((start - since) / span) * plotW;
+      const w = Math.max(2, ((end - start) / span) * plotW);
+      const rect = document.createElementNS(NS, "rect");
+      rect.setAttribute("class", "req " + tlReqColorClass(req));
+      rect.setAttribute("x", String(x));
+      rect.setAttribute("y", String(y + 4));
+      rect.setAttribute("width", String(w));
+      rect.setAttribute("height", String(laneH - 8));
+      rect.setAttribute("data-req-id", req.req_id);
+      rect.addEventListener("mouseenter", (e) => tlShowTooltip(e, req));
+      rect.addEventListener("mousemove", tlMoveTooltip);
+      rect.addEventListener("mouseleave", tlHideTooltip);
+      rect.addEventListener("click", () => {
+        switchTab("requests");
+        selectRequest(req.req_id);
+      });
+      svg.appendChild(rect);
+    });
+  });
+
+  summary.textContent = `${lanes.length} lane(s) · ${totalReqs} request(s)`;
+}
+
+function tlShowTooltip(ev, req) {
+  const tip = document.getElementById("tl-tooltip");
+  const dur = req.finished_at
+    ? ((req.finished_at - req.started_at) * 1000).toFixed(0) + "ms"
+    : "live";
+  const cost = req.cost_usd != null ? "$" + req.cost_usd.toFixed(6) : "—";
+  const tokens = req.input_tokens != null
+    ? `${req.input_tokens}→${req.output_tokens ?? 0}`
+    : "—";
+  tip.innerHTML = `
+    <div><b>${escHtml(req.req_id)}</b> · ${escHtml(req.model || "")}</div>
+    <div>${escHtml(req.provider || "")} · ${escHtml(req.status)}${req.status_code ? " " + req.status_code : ""}</div>
+    <div>duration ${dur} · tokens ${tokens} · ${cost}</div>
+    ${req.error_class ? `<div style="color:var(--err);">⚠ ${escHtml(req.error_class)}</div>` : ""}
+  `;
+  tip.style.display = "block";
+  tlMoveTooltip(ev);
+}
+function tlMoveTooltip(ev) {
+  const tip = document.getElementById("tl-tooltip");
+  tip.style.left = (ev.clientX + 12) + "px";
+  tip.style.top  = (ev.clientY + 12) + "px";
+}
+function tlHideTooltip() {
+  document.getElementById("tl-tooltip").style.display = "none";
+}
+
+function tlStartPolling() {
+  tlStopPolling();
+  if (!tlLiveOn()) return;
+  tlPollTimer = setInterval(() => {
+    if (document.getElementById("tab-timeline").classList.contains("active")) {
+      loadTimeline();
+    }
+  }, 3000);
+}
+function tlStopPolling() {
+  if (tlPollTimer) { clearInterval(tlPollTimer); tlPollTimer = null; }
+}
+
+document.getElementById("tl-group-by").addEventListener("change", loadTimeline);
+document.getElementById("tl-window").addEventListener("change", loadTimeline);
+document.getElementById("tl-refresh-btn").addEventListener("click", loadTimeline);
+document.getElementById("tl-live").addEventListener("change", () => {
+  if (tlLiveOn()) tlStartPolling(); else tlStopPolling();
+});
+window.addEventListener("beforeunload", tlStopPolling);
 
 /* ════════════════════════════════════════════════════════════════════
    Boot

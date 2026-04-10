@@ -209,6 +209,101 @@ def create_dashboard_router(
                 "offset": offset,
             })
 
+    @router.get("/api/requests/export")
+    async def api_request_export(
+        request: Request,
+        _: dict = Depends(require_session),
+    ) -> JSONResponse:
+        if sessionmaker is None:
+            raise HTTPException(status_code=500, detail="sessionmaker not configured")
+        qp = request.query_params
+        providers = qp.getlist("provider") or None
+        models = qp.getlist("model") or None
+        statuses = qp.getlist("status") or None
+        search = qp.get("q")
+        since = float(qp["since"]) if qp.get("since") else None
+        until = float(qp["until"]) if qp.get("until") else None
+        EXPORT_CAP = 10_000
+
+        async with sessionmaker() as s:
+            req_ids = None
+            if search:
+                req_ids = await search_requests(s, query=search, limit=EXPORT_CAP)
+                if not req_ids:
+                    return JSONResponse({
+                        "rows": [], "total": 0, "exported_at": time.time(),
+                    })
+            rows, total = await req_crud.list_with_filters(
+                s,
+                providers=providers,
+                models=models,
+                statuses=statuses,
+                since=since,
+                until=until,
+                req_ids=req_ids,
+                limit=EXPORT_CAP,
+                offset=0,
+            )
+        return JSONResponse({
+            "rows": [_serialize_row_full(r) for r in rows],
+            "total": total,
+            "exported_at": time.time(),
+        })
+
+    @router.get("/api/timeline")
+    async def api_timeline(
+        request: Request,
+        _: dict = Depends(require_session),
+    ) -> JSONResponse:
+        if sessionmaker is None:
+            raise HTTPException(status_code=500, detail="sessionmaker not configured")
+        qp = request.query_params
+        since = float(qp["since"]) if qp.get("since") else None
+        until = float(qp["until"]) if qp.get("until") else None
+        group_by = qp.get("group_by", "model")
+        if group_by not in ("model", "provider", "api_key_id"):
+            raise HTTPException(status_code=400, detail="invalid group_by")
+        TIMELINE_CAP = 2_000
+
+        async with sessionmaker() as s:
+            rows, _total = await req_crud.list_with_filters(
+                s,
+                since=since,
+                until=until,
+                limit=TIMELINE_CAP,
+                offset=0,
+            )
+
+        lanes: dict[str, dict] = {}
+        for row in rows:
+            if group_by == "model":
+                key = row.model or "(none)"
+            elif group_by == "provider":
+                key = row.provider or "(none)"
+            else:
+                key = str(row.api_key_id) if row.api_key_id is not None else "(none)"
+            lane = lanes.setdefault(key, {"key": key, "label": key, "requests": []})
+            lane["requests"].append({
+                "req_id": row.req_id,
+                "provider": row.provider,
+                "model": row.model,
+                "status": row.status,
+                "status_code": row.status_code,
+                "started_at": row.started_at,
+                "finished_at": row.finished_at,
+                "input_tokens": row.input_tokens,
+                "output_tokens": row.output_tokens,
+                "cost_usd": row.cost_usd,
+                "error_class": row.error_class,
+            })
+
+        return JSONResponse({
+            "since": since,
+            "until": until,
+            "group_by": group_by,
+            "lanes": sorted(lanes.values(), key=lambda L: L["key"]),
+        })
+
     @router.get("/api/requests/{req_id}")
     async def api_request_detail(
         req_id: str,
@@ -391,6 +486,66 @@ def create_dashboard_router(
             await config_crud.set_(s, body.key, body.value)
             await s.commit()
         return JSONResponse({"ok": True, "key": body.key, "value": body.value})
+
+    # ---- protected: database stats + vacuum ----
+
+    @router.get("/api/stats/db")
+    async def api_db_stats(_: dict = Depends(require_session)) -> JSONResponse:
+        if sessionmaker is None:
+            raise HTTPException(status_code=500, detail="sessionmaker not configured")
+        from sqlalchemy import func, select, text
+
+        from aiproxy.db.models import Chunk as _Chunk
+        from aiproxy.db.models import Pricing as _Pricing
+        async with sessionmaker() as s:
+            req_count = (await s.execute(
+                select(func.count()).select_from(RequestModel)
+            )).scalar() or 0
+            chunk_count = (await s.execute(
+                select(func.count()).select_from(_Chunk)
+            )).scalar() or 0
+            pricing_count = (await s.execute(
+                select(func.count()).select_from(_Pricing)
+            )).scalar() or 0
+            page_count = (await s.execute(text("PRAGMA page_count"))).scalar() or 0
+            page_size = (await s.execute(text("PRAGMA page_size"))).scalar() or 0
+            db_size_bytes = int(page_count) * int(page_size)
+        return JSONResponse({
+            "db_size_bytes": db_size_bytes,
+            "request_count": int(req_count),
+            "chunk_count": int(chunk_count),
+            "pricing_count": int(pricing_count),
+        })
+
+    @router.post("/api/batch/vacuum")
+    async def api_vacuum(_: dict = Depends(require_session)) -> JSONResponse:
+        if sessionmaker is None:
+            raise HTTPException(status_code=500, detail="sessionmaker not configured")
+        from sqlalchemy import text
+
+        async def _size() -> int:
+            async with sessionmaker() as s:
+                pc = (await s.execute(text("PRAGMA page_count"))).scalar() or 0
+                ps = (await s.execute(text("PRAGMA page_size"))).scalar() or 0
+                return int(pc) * int(ps)
+
+        size_before = await _size()
+
+        # VACUUM cannot run inside an explicit transaction. Pull the
+        # AsyncEngine from the sessionmaker's kwargs (the `bind` it was
+        # configured with) and open a dedicated AUTOCOMMIT connection so
+        # SQLAlchemy won't wrap our statement in a BEGIN.
+        engine = sessionmaker.kw["bind"]
+        async with engine.connect() as conn:
+            conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.exec_driver_sql("VACUUM")
+
+        size_after = await _size()
+        return JSONResponse({
+            "ok": True,
+            "db_size_bytes_before": size_before,
+            "db_size_bytes_after": size_after,
+        })
 
     # ---- protected: batch strip binaries ----
 

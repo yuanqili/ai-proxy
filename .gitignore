@@ -22,6 +22,11 @@ build/
 *.sqlite3
 *.db
 
+# Coverage
+.coverage
+htmlcov/
+coverage.xml
+
 # Editor
 .vscode/
 .idea/
