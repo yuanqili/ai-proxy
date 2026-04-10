@@ -1,14 +1,18 @@
 """FastAPI app factory + production lifespan.
 
 Two entry points:
-  - `build_app(...)` — synchronous factory for tests. Takes a pre-built
-    sessionmaker so tests can inject in-memory SQLite. Stores the created
-    http_client on `app.state` so the caller can close it in teardown.
-  - `app` (module-level) — production instance. Uses `lifespan()` to
-    async-init the DB from settings, then registers the router in-place.
+  - `build_app(...)` — synchronous factory for tests.
+  - `app` (module-level) — production instance, uses `lifespan()`.
+
+Phase 2 additions:
+  - StreamBus + RequestRegistry created here (one per app instance)
+  - Dashboard router mounted alongside the proxy router
+  - Retention background task spawned in lifespan
+  - Pricing seed on first startup
 """
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 import httpx
@@ -18,8 +22,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from aiproxy.auth.proxy_auth import ApiKeyCache
 from aiproxy.bus import StreamBus
 from aiproxy.core.passthrough import PassthroughEngine
+from aiproxy.dashboard.routes import create_dashboard_router
 from aiproxy.db.engine import create_engine_and_sessionmaker
 from aiproxy.db.models import Base
+from aiproxy.db.retention import retention_loop
+from aiproxy.pricing.seed import seed_pricing_if_empty
 from aiproxy.providers import build_registry
 from aiproxy.registry import RequestRegistry
 from aiproxy.routers.proxy import create_router
@@ -44,10 +51,7 @@ def build_app(
     openrouter_base_url: str,
     openrouter_api_key: str,
 ) -> FastAPI:
-    """Synchronous factory for tests.
-
-    The caller is responsible for closing `app.state.http_client` on teardown.
-    """
+    """Synchronous factory for tests."""
     http_client = _make_http_client()
     bus = StreamBus()
     registry = RequestRegistry(bus)
@@ -73,6 +77,7 @@ def build_app(
     app.state.bus = bus
     app.state.registry = registry
     app.include_router(create_router(engine=engine, providers=providers, cache=cache))
+    app.include_router(create_dashboard_router(bus=bus, registry=registry))
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -83,10 +88,14 @@ def build_app(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Production lifespan: init DB + http client, register router, dispose on exit."""
+    """Production lifespan: init DB + http client, register routes, spawn
+    retention task, dispose on exit."""
     sql_engine, sessionmaker = create_engine_and_sessionmaker(settings.database_url)
     async with sql_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Seed pricing if the table is empty (first-run bootstrap)
+    await seed_pricing_if_empty(sessionmaker)
 
     http_client = _make_http_client()
     bus = StreamBus()
@@ -107,17 +116,28 @@ async def lifespan(app: FastAPI):
     )
     cache = ApiKeyCache(sessionmaker, ttl_seconds=60)
 
-    # Register the router in-place. FastAPI allows include_router during lifespan
-    # before the first request is served.
     app.include_router(create_router(engine=engine, providers=providers, cache=cache))
+    app.include_router(create_dashboard_router(bus=bus, registry=registry))
     app.state.http_client = http_client
     app.state.sessionmaker = sessionmaker
     app.state.bus = bus
     app.state.registry = registry
 
+    # Background retention task — reads threshold from settings
+    retention_task = asyncio.create_task(retention_loop(
+        sessionmaker,
+        get_full_count=lambda: 500,  # TODO(phase-3): read from config table
+        interval_seconds=60.0,
+    ))
+
     try:
         yield
     finally:
+        retention_task.cancel()
+        try:
+            await retention_task
+        except asyncio.CancelledError:
+            pass
         await http_client.aclose()
         await sql_engine.dispose()
 
