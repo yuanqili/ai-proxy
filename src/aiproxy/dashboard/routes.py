@@ -250,6 +250,60 @@ def create_dashboard_router(
             "exported_at": time.time(),
         })
 
+    @router.get("/api/timeline")
+    async def api_timeline(
+        request: Request,
+        _: dict = Depends(require_session),
+    ) -> JSONResponse:
+        if sessionmaker is None:
+            raise HTTPException(status_code=500, detail="sessionmaker not configured")
+        qp = request.query_params
+        since = float(qp["since"]) if qp.get("since") else None
+        until = float(qp["until"]) if qp.get("until") else None
+        group_by = qp.get("group_by", "model")
+        if group_by not in ("model", "provider", "api_key_id"):
+            raise HTTPException(status_code=400, detail="invalid group_by")
+        TIMELINE_CAP = 2_000
+
+        async with sessionmaker() as s:
+            rows, _total = await req_crud.list_with_filters(
+                s,
+                since=since,
+                until=until,
+                limit=TIMELINE_CAP,
+                offset=0,
+            )
+
+        lanes: dict[str, dict] = {}
+        for row in rows:
+            if group_by == "model":
+                key = row.model or "(none)"
+            elif group_by == "provider":
+                key = row.provider or "(none)"
+            else:
+                key = str(row.api_key_id) if row.api_key_id is not None else "(none)"
+            lane = lanes.setdefault(key, {"key": key, "label": key, "requests": []})
+            lane["requests"].append({
+                "req_id": row.req_id,
+                "provider": row.provider,
+                "model": row.model,
+                "status": row.status,
+                "status_code": row.status_code,
+                "started_at": row.started_at,
+                "finished_at": row.finished_at,
+                "input_tokens": row.input_tokens,
+                "output_tokens": row.output_tokens,
+                "cost_usd": row.cost_usd,
+                "error_class": row.error_class,
+            })
+
+        return JSONResponse({
+            "since": since,
+            "until": until,
+            "group_by": group_by,
+            "lanes": sorted(lanes.values(), key=lambda L: L["key"]),
+        })
+
     @router.get("/api/requests/{req_id}")
     async def api_request_detail(
         req_id: str,
