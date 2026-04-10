@@ -1,0 +1,46 @@
+{
+  "entries": [
+    {
+      "provider": "openai",
+      "model": "gpt-4o",
+      "input_per_1m_usd": 2.50,
+      "output_per_1m_usd": 10.00,
+      "cached_per_1m_usd": 1.25
+    },
+    {
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "input_per_1m_usd": 0.15,
+      "output_per_1m_usd": 0.60,
+      "cached_per_1m_usd": 0.075
+    },
+    {
+      "provider": "openai",
+      "model": "o3-mini",
+      "input_per_1m_usd": 1.10,
+      "output_per_1m_usd": 4.40,
+      "cached_per_1m_usd": 0.55
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5-20250929",
+      "input_per_1m_usd": 3.00,
+      "output_per_1m_usd": 15.00,
+      "cached_per_1m_usd": 0.30
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
+      "input_per_1m_usd": 0.80,
+      "output_per_1m_usd": 4.00,
+      "cached_per_1m_usd": 0.08
+    },
+    {
+      "provider": "anthropic",
+      "model": "claude-opus-4-6",
+      "input_per_1m_usd": 15.00,
+      "output_per_1m_usd": 75.00,
+      "cached_per_1m_usd": 1.50
+    }
+  ]
+}
