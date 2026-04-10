@@ -1,8 +1,17 @@
-"""Placeholder — will be rebuilt in Task 15."""
+"""Run: python -m aiproxy"""
 import uvicorn
 
+from aiproxy.settings import settings
+
+
 def main() -> None:
-    uvicorn.run("aiproxy.app:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run(
+        "aiproxy.app:app",
+        host=settings.host,
+        port=settings.port,
+        reload=False,
+    )
+
 
 if __name__ == "__main__":
     main()
