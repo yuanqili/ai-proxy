@@ -9,6 +9,7 @@ Phase 2 responsibilities (additions over Phase 1):
 from __future__ import annotations
 
 import asyncio
+import base64
 import time
 from collections.abc import AsyncIterator
 
@@ -268,12 +269,16 @@ class PassthroughEngine:
 
                     # Publish to dashboard subscribers (short-circuit if no one listening)
                     if bus.has_subscribers(req_id):
+                        text_delta, events = provider.extract_chunk_text(chunk)
                         bus.publish(req_id, {
                             "type": "chunk",
                             "req_id": req_id,
                             "seq": seq,
                             "offset_ns": offset_ns,
                             "size": len(chunk),
+                            "data_b64": base64.b64encode(chunk).decode("ascii"),
+                            "text_delta": text_delta,
+                            "events": events,
                         })
 
                     yield chunk
