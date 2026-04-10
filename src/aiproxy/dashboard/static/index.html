@@ -188,6 +188,35 @@ a:hover { text-decoration: underline; }
 .status-pill.streaming, .status-pill.pending { background: rgba(210,153,34,.2); color: var(--warn); }
 .status-pill.error { background: rgba(248,81,73,.2); color: var(--err); }
 .status-pill.canceled { background: rgba(139,148,158,.2); color: var(--muted); }
+
+/* ── Error banner (Overview tab) ──────────────────────────────────── */
+.error-banner {
+  margin: 0 0 12px 0;
+  padding: 10px 12px;
+  border-left: 3px solid #f85149;
+  background: #2d1115;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #f0b3b8;
+}
+.error-banner .eb-title {
+  font-weight: 600;
+  color: #f85149;
+  margin-bottom: 4px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.error-banner .eb-msg {
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+}
+.error-banner pre.eb-msg {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  margin: 0;
+}
 #req-list-footer { padding: 6px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--border); display: flex; gap: 8px; align-items: center; }
 #req-list-count { flex: 1; }
 #load-more-btn { font-size: 11px; }
@@ -1193,7 +1222,20 @@ function renderOverview(req) {
     ? ((req.first_chunk_at - req.upstream_sent_at) * 1000).toFixed(0) + "ms"
     : "—";
 
-  el.innerHTML = `<table class="meta-table">
+  let bannerHtml = "";
+  if (req.error_class) {
+    const isInternal = req.error_class === "proxy_internal";
+    const msg = req.error_message || "";
+    const msgHtml = isInternal
+      ? `<pre class="eb-msg">${escHtml(msg)}</pre>`
+      : `<div class="eb-msg">${escHtml(msg)}</div>`;
+    bannerHtml = `<div class="error-banner">
+      <div class="eb-title">⚠ ${escHtml(req.error_class)}</div>
+      ${msgHtml}
+    </div>`;
+  }
+
+  el.innerHTML = bannerHtml + `<table class="meta-table">
     ${row("Provider", escHtml(req.provider || "—"))}
     ${row("Model", escHtml(req.model || "—"))}
     ${row("Method + Endpoint", escHtml((req.method || "") + " " + (req.endpoint || "")))}
@@ -1211,8 +1253,6 @@ function renderOverview(req) {
     ${row("Cost", fmtCost(req.cost_usd))}
     ${row("Pricing ID", req.pricing_id != null ? String(req.pricing_id) : "—")}
     ${row("Binaries stripped", req.binaries_stripped ? "yes" : "no")}
-    ${req.error_class ? row("Error class", escHtml(req.error_class)) : ""}
-    ${req.error_message ? row("Error message", escHtml(req.error_message)) : ""}
   </table>`;
 }
 
