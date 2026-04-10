@@ -13,6 +13,7 @@ Phase 1 does NOT:
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
 
@@ -22,6 +23,46 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from aiproxy.core.headers import clean_downstream_headers, clean_upstream_headers
 from aiproxy.db.crud import requests as req_crud
 from aiproxy.providers.base import Provider
+
+
+async def _finalize(
+    *,
+    sessionmaker: async_sessionmaker,
+    req_id: str,
+    final_status: str,
+    status_code: int,
+    resp_headers: dict[str, str],
+    resp_body: bytes,
+    error_class: str | None,
+    error_message: str | None,
+) -> None:
+    """Persist the terminal state of a streaming request.
+
+    Called from the stream generator's `finally` block under `asyncio.shield`
+    so the write completes even if the generator is cancelled by a client
+    disconnect.
+    """
+    async with sessionmaker() as session:
+        if final_status == "error":
+            await req_crud.mark_error(
+                session,
+                req_id=req_id,
+                error_class=error_class or "unknown",
+                error_message=error_message or "",
+                finished_at=time.time(),
+            )
+        else:
+            # 'done' or 'canceled' — both use mark_finished with the respective status
+            await req_crud.mark_finished(
+                session,
+                req_id=req_id,
+                status=final_status,
+                status_code=status_code,
+                resp_headers=resp_headers,
+                resp_body=resp_body,
+                finished_at=time.time(),
+            )
+        await session.commit()
 
 
 class PassthroughEngine:
@@ -116,35 +157,45 @@ class PassthroughEngine:
 
         async def stream_and_persist() -> AsyncIterator[bytes]:
             buffer: list[bytes] = []
+            final_status: str = "done"
+            error_class: str | None = None
+            error_message: str | None = None
             try:
                 async for chunk in upstream_resp.aiter_raw():
                     buffer.append(chunk)
                     yield chunk
+            except asyncio.CancelledError:
+                # Client disconnected before the upstream stream finished.
+                # Whatever we've buffered is what we got — persist as canceled.
+                final_status = "canceled"
+                raise
+            except httpx.ReadError as e:
+                final_status = "error"
+                error_class = "stream_interrupted"
+                error_message = str(e)
+                raise
+            except Exception as e:
+                final_status = "error"
+                error_class = "stream_interrupted"
+                error_message = str(e)
+                raise
+            finally:
+                # Always persist final state, even on cancellation/error.
+                # Shield from outer cancellation so the DB write can complete.
                 body_bytes = b"".join(buffer)
-                async with self._sessionmaker() as session:
-                    await req_crud.mark_finished(
-                        session,
+                try:
+                    await asyncio.shield(_finalize(
+                        sessionmaker=self._sessionmaker,
                         req_id=req_id,
-                        status="done",
+                        final_status=final_status,
                         status_code=upstream_resp.status_code,
                         resp_headers=dict(upstream_resp.headers),
                         resp_body=body_bytes,
-                        finished_at=time.time(),
-                    )
-                    await session.commit()
-            except Exception as e:
-                async with self._sessionmaker() as session:
-                    await req_crud.mark_error(
-                        session,
-                        req_id=req_id,
-                        error_class="stream_interrupted",
-                        error_message=str(e),
-                        finished_at=time.time(),
-                    )
-                    await session.commit()
-                raise
-            finally:
-                await upstream_resp.aclose()
+                        error_class=error_class,
+                        error_message=error_message,
+                    ))
+                finally:
+                    await upstream_resp.aclose()
 
         return (
             upstream_resp.status_code,
