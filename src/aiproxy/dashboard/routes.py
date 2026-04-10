@@ -35,9 +35,12 @@ import re
 import secrets
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+
+if TYPE_CHECKING:
+    from aiproxy.providers.base import Provider
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -111,9 +114,11 @@ def create_dashboard_router(
     master_key: str,
     session_secret: str,
     secure_cookies: bool,
+    providers_map: "dict[str, Provider] | None" = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/dashboard")
     require_session = require_dashboard_session(session_secret)
+    providers_map = providers_map or {}
 
     # ---- static ----
 
@@ -228,6 +233,55 @@ def create_dashboard_router(
                     for c in chunks
                 ],
             })
+
+    @router.get("/api/requests/{req_id}/replay")
+    async def api_request_replay(
+        req_id: str,
+        _: dict = Depends(require_session),
+    ) -> JSONResponse:
+        if sessionmaker is None:
+            raise HTTPException(status_code=500, detail="sessionmaker not configured")
+        async with sessionmaker() as s:
+            row = await req_crud.get_by_id(s, req_id)
+            if row is None:
+                raise HTTPException(status_code=404, detail="request not found")
+            chunks = await chunks_crud.list_for_request(s, req_id)
+
+        provider_name = row.provider or ""
+        provider = providers_map.get(provider_name)
+
+        parsed: list[dict] = []
+        first_content_offset_ns: int | None = None
+        total_duration_ns = 0
+
+        for c in chunks:
+            if provider is not None:
+                text_delta, events = provider.extract_chunk_text(c.data)
+            else:
+                text_delta, events = ("", [])
+            if first_content_offset_ns is None and text_delta:
+                first_content_offset_ns = c.offset_ns
+            if c.offset_ns > total_duration_ns:
+                total_duration_ns = c.offset_ns
+            parsed.append({
+                "seq": c.seq,
+                "offset_ns": c.offset_ns,
+                "size": c.size,
+                "text_delta": text_delta,
+                "events": events,
+                "raw_b64": base64.b64encode(c.data).decode("ascii"),
+            })
+
+        return JSONResponse({
+            "req_id": req_id,
+            "provider": provider_name,
+            "model": row.model,
+            "is_streaming": bool(row.is_streaming),
+            "status": row.status,
+            "chunks": parsed,
+            "first_content_offset_ns": first_content_offset_ns,
+            "total_duration_ns": total_duration_ns,
+        })
 
     # ---- protected: keys ----
 

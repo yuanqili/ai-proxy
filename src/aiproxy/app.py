@@ -88,6 +88,7 @@ def build_app(
         master_key=settings.proxy_master_key,
         session_secret=settings.session_secret,
         secure_cookies=settings.secure_cookies,
+        providers_map=providers,
     ))
     app.include_router(create_router(engine=engine, providers=providers, cache=cache))
 
@@ -137,6 +138,7 @@ async def lifespan(app: FastAPI):
         master_key=settings.proxy_master_key,
         session_secret=settings.session_secret,
         secure_cookies=settings.secure_cookies,
+        providers_map=providers,
     ))
     app.include_router(create_router(engine=engine, providers=providers, cache=cache))
     app.state.http_client = http_client
