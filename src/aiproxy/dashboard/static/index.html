@@ -1034,6 +1034,7 @@ async function selectRequest(reqId) {
     replayData = null;
     replayReqId = null;
     resetPlayer();
+    closeReplayWs();
     // Keep replayMode as user preference
   }
   // Mark selected in list
@@ -1089,6 +1090,10 @@ function renderDetailHeader(req) {
 }
 
 function switchDetailTab(name) {
+  if (detailTab === "replay" && name !== "replay") {
+    closeReplayWs();
+    player.liveFollow = false;
+  }
   detailTab = name;
   document.querySelectorAll(".detail-tab").forEach(b =>
     b.classList.toggle("active", b.dataset.dtab === name));
@@ -1200,6 +1205,7 @@ function renderChunks(chunks) {
 let replayData = null;       // full /replay payload for current selectedReqId
 let replayMode = "player";   // "player" | "jsonlog"
 let replayReqId = null;      // which req_id replayData belongs to
+let replayWs = null;         // WebSocket for live-follow
 
 async function renderReplay(req) {
   const el = document.getElementById("dpanel-replay");
@@ -1262,6 +1268,65 @@ function resetPlayer() {
   player.liveFollow = false;
 }
 
+function openReplayWs(reqId) {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const url = `${proto}://${location.host}/dashboard/ws/stream/${encodeURIComponent(reqId)}`;
+  replayWs = new WebSocket(url);
+  replayWs.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === "chunk") {
+      // Append to replayData.chunks
+      if (!replayData) return;
+      replayData.chunks.push({
+        seq: ev.seq,
+        offset_ns: ev.offset_ns,
+        size: ev.size,
+        text_delta: ev.text_delta || "",
+        events: ev.events || [],
+        raw_b64: ev.data_b64 || "",
+      });
+      // Update derived fields
+      if (replayData.first_content_offset_ns == null && ev.text_delta) {
+        replayData.first_content_offset_ns = ev.offset_ns;
+      }
+      if (ev.offset_ns > (replayData.total_duration_ns || 0)) {
+        replayData.total_duration_ns = ev.offset_ns;
+      }
+      // If in live-follow mode, pin the cursor to the new right edge
+      if (player.liveFollow) {
+        player.currentNs = replayData.total_duration_ns;
+      }
+      // Re-add scrubber tick for the new chunk
+      const track = document.getElementById("scrubber-track");
+      if (track && replayData.total_duration_ns > 0) {
+        const pct = (ev.offset_ns / replayData.total_duration_ns) * 100;
+        const tick = document.createElement("div");
+        tick.className = "scrubber-tick";
+        tick.style.left = pct + "%";
+        track.appendChild(tick);
+      }
+      playerPaint();
+      // Also append to the JSON Log table if that mode is active
+      if (replayMode === "jsonlog" && typeof jsonLogAppendRow === "function") {
+        jsonLogAppendRow(replayData.chunks.length - 1);
+      }
+    } else if (ev.type === "done" || ev.type === "error") {
+      player.liveFollow = false;
+      closeReplayWs();
+    }
+    // ignore meta / heartbeat / already_done
+  };
+  replayWs.onclose = () => { replayWs = null; };
+  replayWs.onerror = () => { if (replayWs) replayWs.close(); };
+}
+
+function closeReplayWs() {
+  if (replayWs) {
+    try { replayWs.close(); } catch {}
+    replayWs = null;
+  }
+}
+
 function fmtNs(ns) {
   if (ns == null) return "—";
   const s = ns / 1e9;
@@ -1271,6 +1336,13 @@ function fmtNs(ns) {
 
 function renderPlayer(req) {
   resetPlayer();
+  closeReplayWs();
+  const isLive = req.status === "streaming" || req.status === "pending";
+  if (isLive) {
+    player.liveFollow = true;
+    player.view = "typewriter";
+    openReplayWs(req.req_id);
+  }
   const el = document.getElementById("replay-content");
   if (!replayData || !replayData.chunks || !replayData.chunks.length) {
     el.innerHTML = '<div id="replay-empty">No chunks to replay.</div>';
@@ -1278,7 +1350,6 @@ function renderPlayer(req) {
   }
   const total = replayData.total_duration_ns || 1;
   const firstContent = replayData.first_content_offset_ns;
-  const isLive = req.status === "streaming" || req.status === "pending";
 
   // Build the player chrome
   el.innerHTML = `
@@ -1355,12 +1426,14 @@ function renderPlayer(req) {
     const rect = track.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     playerSeek(pct * total, false);
+    // If user seeks away from the right edge, detach live-follow
+    if (pct < 0.99) {
+      player.liveFollow = false;
+    } else if (req.status === "streaming" || req.status === "pending") {
+      // Snapped back to the edge — re-attach
+      player.liveFollow = true;
+    }
   });
-
-  // For live streams, hide the dim view (only typewriter makes sense)
-  if (isLive) {
-    player.view = "typewriter";
-  }
 
   // Reset position and paint
   player.currentNs = 0;
