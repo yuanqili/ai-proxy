@@ -72,14 +72,19 @@ async def prune_old_requests(
 async def retention_loop(
     sessionmaker: async_sessionmaker,
     *,
-    get_full_count: callable,   # () -> int, e.g. reads from Settings or config table
+    get_full_count,  # async callable or sync callable
     interval_seconds: float = 60.0,
 ) -> None:
-    """Run prune_old_requests in a loop. Swallows exceptions so the task keeps running."""
+    """Run prune_old_requests in a loop. Swallows exceptions so the task keeps running.
+
+    `get_full_count` may be sync or async.
+    """
+    import inspect
     while True:
         try:
             await asyncio.sleep(interval_seconds)
-            full_count = get_full_count()
+            maybe = get_full_count()
+            full_count = await maybe if inspect.isawaitable(maybe) else maybe
             if full_count > 0:
                 trimmed = await prune_old_requests(sessionmaker, full_count=full_count)
                 if trimmed:

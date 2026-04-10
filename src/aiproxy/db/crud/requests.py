@@ -102,3 +102,56 @@ async def mark_error(
 async def get_by_id(session: AsyncSession, req_id: str) -> Request | None:
     result = await session.execute(select(Request).where(Request.req_id == req_id))
     return result.scalar_one_or_none()
+
+
+from sqlalchemy import func
+
+
+async def list_with_filters(
+    session: AsyncSession,
+    *,
+    providers: list[str] | None = None,
+    models: list[str] | None = None,
+    statuses: list[str] | None = None,
+    api_key_id: int | None = None,
+    since: float | None = None,
+    until: float | None = None,
+    req_ids: list[str] | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[Request], int]:
+    """Paginated, filtered list of requests ordered by started_at DESC.
+
+    Returns (rows, total_count) — total_count ignores limit/offset.
+
+    If `req_ids` is provided, result is limited to those IDs (used by
+    FTS-driven search to narrow the listing).
+    """
+    stmt = select(Request)
+    count_stmt = select(func.count()).select_from(Request)
+
+    conditions = []
+    if providers:
+        conditions.append(Request.provider.in_(providers))
+    if models:
+        conditions.append(Request.model.in_(models))
+    if statuses:
+        conditions.append(Request.status.in_(statuses))
+    if api_key_id is not None:
+        conditions.append(Request.api_key_id == api_key_id)
+    if since is not None:
+        conditions.append(Request.started_at >= since)
+    if until is not None:
+        conditions.append(Request.started_at <= until)
+    if req_ids is not None:
+        conditions.append(Request.req_id.in_(req_ids))
+
+    for cond in conditions:
+        stmt = stmt.where(cond)
+        count_stmt = count_stmt.where(cond)
+
+    stmt = stmt.order_by(Request.started_at.desc()).limit(limit).offset(offset)
+
+    rows = (await session.execute(stmt)).scalars().all()
+    total = (await session.execute(count_stmt)).scalar() or 0
+    return list(rows), int(total)
