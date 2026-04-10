@@ -16,10 +16,12 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from aiproxy.auth.proxy_auth import ApiKeyCache
+from aiproxy.bus import StreamBus
 from aiproxy.core.passthrough import PassthroughEngine
 from aiproxy.db.engine import create_engine_and_sessionmaker
 from aiproxy.db.models import Base
 from aiproxy.providers import build_registry
+from aiproxy.registry import RequestRegistry
 from aiproxy.routers.proxy import create_router
 from aiproxy.settings import settings
 
@@ -47,7 +49,14 @@ def build_app(
     The caller is responsible for closing `app.state.http_client` on teardown.
     """
     http_client = _make_http_client()
-    engine = PassthroughEngine(http_client=http_client, sessionmaker=sessionmaker)
+    bus = StreamBus()
+    registry = RequestRegistry(bus)
+    engine = PassthroughEngine(
+        http_client=http_client,
+        sessionmaker=sessionmaker,
+        bus=bus,
+        registry=registry,
+    )
     providers = build_registry(
         openai_base_url=openai_base_url,
         openai_api_key=openai_api_key,
@@ -61,6 +70,8 @@ def build_app(
     app = FastAPI(title="AI Proxy")
     app.state.http_client = http_client
     app.state.sessionmaker = sessionmaker
+    app.state.bus = bus
+    app.state.registry = registry
     app.include_router(create_router(engine=engine, providers=providers, cache=cache))
 
     @app.get("/healthz")
@@ -78,7 +89,14 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
 
     http_client = _make_http_client()
-    engine = PassthroughEngine(http_client=http_client, sessionmaker=sessionmaker)
+    bus = StreamBus()
+    registry = RequestRegistry(bus)
+    engine = PassthroughEngine(
+        http_client=http_client,
+        sessionmaker=sessionmaker,
+        bus=bus,
+        registry=registry,
+    )
     providers = build_registry(
         openai_base_url=settings.openai_base_url,
         openai_api_key=settings.openai_api_key,
@@ -94,6 +112,8 @@ async def lifespan(app: FastAPI):
     app.include_router(create_router(engine=engine, providers=providers, cache=cache))
     app.state.http_client = http_client
     app.state.sessionmaker = sessionmaker
+    app.state.bus = bus
+    app.state.registry = registry
 
     try:
         yield

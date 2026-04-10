@@ -6,9 +6,11 @@ from fastapi import FastAPI
 from httpx import ASGITransport
 
 from aiproxy.auth.proxy_auth import ApiKeyCache
+from aiproxy.bus import StreamBus
 from aiproxy.core.passthrough import PassthroughEngine
 from aiproxy.db.crud import api_keys as api_keys_crud
 from aiproxy.providers import build_registry
+from aiproxy.registry import RequestRegistry
 from aiproxy.routers.proxy import create_router
 
 
@@ -22,7 +24,14 @@ async def app_with_seeded_key(db_sessionmaker):
         await s.commit()
 
     upstream_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
-    engine = PassthroughEngine(http_client=upstream_client, sessionmaker=db_sessionmaker)
+    bus = StreamBus()
+    registry = RequestRegistry(bus)
+    engine = PassthroughEngine(
+        http_client=upstream_client,
+        sessionmaker=db_sessionmaker,
+        bus=bus,
+        registry=registry,
+    )
     providers = build_registry(
         openai_base_url="https://api.openai.com",
         openai_api_key="sk-test",
