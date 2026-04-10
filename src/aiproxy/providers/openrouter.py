@@ -1,8 +1,8 @@
 """OpenRouter provider — OpenAI-compatible Bearer auth, /api/v1/ prefix."""
 from __future__ import annotations
 
-from aiproxy.providers.base import Provider, Usage
-from aiproxy.providers.openai import OpenAIProvider
+from aiproxy.providers.base import ChunkParser, Provider, Usage
+from aiproxy.providers.openai import OpenAIChunkParser, OpenAIProvider
 
 
 class OpenRouterProvider(Provider):
@@ -37,7 +37,6 @@ class OpenRouterProvider(Provider):
             chunks=chunks,
         )
 
-    def extract_chunk_text(self, chunk_data: bytes) -> tuple[str, list[dict]]:
+    def make_chunk_parser(self) -> ChunkParser:
         # OpenRouter uses the same chat-completions SSE format as OpenAI.
-        from aiproxy.providers.openai import OpenAIProvider
-        return OpenAIProvider.extract_chunk_text(self, chunk_data)  # type: ignore[arg-type]
+        return OpenAIChunkParser()

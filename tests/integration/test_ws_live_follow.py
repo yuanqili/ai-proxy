@@ -25,7 +25,8 @@ async def test_live_chunk_event_includes_data_and_text():
     # Simulate what passthrough.stream_and_persist does when publishing one chunk:
     raw = b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'
     provider = OpenAIProvider(base_url="http://x", api_key="x")
-    text_delta, events = provider.extract_chunk_text(raw)
+    parser = provider.make_chunk_parser()
+    text_delta, events = parser.feed(raw)
     bus.publish("live1", {
         "type": "chunk",
         "req_id": "live1",

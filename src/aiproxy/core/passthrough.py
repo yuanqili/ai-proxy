@@ -258,6 +258,10 @@ class PassthroughEngine:
             final_status: str = "done"
             error_class: str | None = None
             error_message: str | None = None
+            # One stateful SSE parser per request, lazily built on first live
+            # subscriber. Events that span TCP chunk boundaries get attributed
+            # to the chunk that completes them.
+            chunk_parser = None
             try:
                 async for chunk in upstream_resp.aiter_raw():
                     ts_ns = time.monotonic_ns()
@@ -269,7 +273,9 @@ class PassthroughEngine:
 
                     # Publish to dashboard subscribers (short-circuit if no one listening)
                     if bus.has_subscribers(req_id):
-                        text_delta, events = provider.extract_chunk_text(chunk)
+                        if chunk_parser is None:
+                            chunk_parser = provider.make_chunk_parser()
+                        text_delta, events = chunk_parser.feed(chunk)
                         bus.publish(req_id, {
                             "type": "chunk",
                             "req_id": req_id,

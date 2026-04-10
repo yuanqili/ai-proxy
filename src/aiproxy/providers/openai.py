@@ -3,7 +3,44 @@ from __future__ import annotations
 
 import json
 
-from aiproxy.providers.base import Provider, Usage, iter_sse_data_events
+from aiproxy.providers.base import (
+    ChunkParser,
+    Provider,
+    Usage,
+    _iter_complete_sse_events,
+    iter_sse_data_events,
+)
+
+
+def _openai_delta_text(event: dict) -> str:
+    choices = event.get("choices")
+    if not isinstance(choices, list):
+        return ""
+    parts: list[str] = []
+    for ch in choices:
+        delta = ch.get("delta") if isinstance(ch, dict) else None
+        if isinstance(delta, dict):
+            content = delta.get("content")
+            if isinstance(content, str):
+                parts.append(content)
+    return "".join(parts)
+
+
+class OpenAIChunkParser(ChunkParser):
+    """Stateful SSE parser for OpenAI / OpenRouter chat completions streams.
+
+    Buffers partial SSE frames across TCP chunks. Events that span multiple
+    raw chunks are attributed (text + json) to the chunk that completes them.
+    """
+
+    def __init__(self) -> None:
+        self._buf = b""
+
+    def feed(self, chunk: bytes) -> tuple[str, list[dict]]:
+        self._buf += chunk
+        events, self._buf = _iter_complete_sse_events(self._buf)
+        text = "".join(_openai_delta_text(ev) for ev in events)
+        return (text, events)
 
 
 def _parse_openai_usage(obj: dict) -> Usage | None:
@@ -73,19 +110,5 @@ class OpenAIProvider(Provider):
                 return _parse_openai_usage(event)
         return None
 
-    def extract_chunk_text(self, chunk_data: bytes) -> tuple[str, list[dict]]:
-        if not chunk_data:
-            return ("", [])
-        events = iter_sse_data_events([chunk_data])
-        text_parts: list[str] = []
-        for ev in events:
-            choices = ev.get("choices")
-            if not isinstance(choices, list):
-                continue
-            for ch in choices:
-                delta = ch.get("delta") if isinstance(ch, dict) else None
-                if isinstance(delta, dict):
-                    content = delta.get("content")
-                    if isinstance(content, str):
-                        text_parts.append(content)
-        return ("".join(text_parts), events)
+    def make_chunk_parser(self) -> ChunkParser:
+        return OpenAIChunkParser()

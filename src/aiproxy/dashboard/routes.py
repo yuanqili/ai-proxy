@@ -249,14 +249,15 @@ def create_dashboard_router(
 
         provider_name = row.provider or ""
         provider = providers_map.get(provider_name)
+        chunk_parser = provider.make_chunk_parser() if provider is not None else None
 
         parsed: list[dict] = []
         first_content_offset_ns: int | None = None
         total_duration_ns = 0
 
         for c in chunks:
-            if provider is not None:
-                text_delta, events = provider.extract_chunk_text(c.data)
+            if chunk_parser is not None:
+                text_delta, events = chunk_parser.feed(c.data)
             else:
                 text_delta, events = ("", [])
             if first_content_offset_ns is None and text_delta:

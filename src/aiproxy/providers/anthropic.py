@@ -3,9 +3,39 @@ from __future__ import annotations
 
 import json
 
-from aiproxy.providers.base import Provider, Usage, iter_sse_data_events
+from aiproxy.providers.base import (
+    ChunkParser,
+    Provider,
+    Usage,
+    _iter_complete_sse_events,
+    iter_sse_data_events,
+)
 
 ANTHROPIC_VERSION = "2023-06-01"
+
+
+def _anthropic_delta_text(event: dict) -> str:
+    if event.get("type") != "content_block_delta":
+        return ""
+    delta = event.get("delta")
+    if isinstance(delta, dict) and delta.get("type") == "text_delta":
+        t = delta.get("text")
+        if isinstance(t, str):
+            return t
+    return ""
+
+
+class AnthropicChunkParser(ChunkParser):
+    """Stateful SSE parser for Anthropic streams (content_block_delta events)."""
+
+    def __init__(self) -> None:
+        self._buf = b""
+
+    def feed(self, chunk: bytes) -> tuple[str, list[dict]]:
+        self._buf += chunk
+        events, self._buf = _iter_complete_sse_events(self._buf)
+        text = "".join(_anthropic_delta_text(ev) for ev in events)
+        return (text, events)
 
 
 class AnthropicProvider(Provider):
@@ -72,19 +102,8 @@ class AnthropicProvider(Provider):
             cached_tokens=cached,
         )
 
-    def extract_chunk_text(self, chunk_data: bytes) -> tuple[str, list[dict]]:
-        if not chunk_data:
-            return ("", [])
-        events = iter_sse_data_events([chunk_data])
-        text_parts: list[str] = []
-        for ev in events:
-            if ev.get("type") == "content_block_delta":
-                delta = ev.get("delta")
-                if isinstance(delta, dict) and delta.get("type") == "text_delta":
-                    t = delta.get("text")
-                    if isinstance(t, str):
-                        text_parts.append(t)
-        return ("".join(text_parts), events)
+    def make_chunk_parser(self) -> ChunkParser:
+        return AnthropicChunkParser()
 
     @staticmethod
     def _usage_from_dict(usage: dict | None) -> Usage | None:
