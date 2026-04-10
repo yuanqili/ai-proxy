@@ -1,5 +1,4 @@
 """Run: python -m aiproxy"""
-
 import uvicorn
 
 from aiproxy.settings import settings
