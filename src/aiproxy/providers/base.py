@@ -94,3 +94,61 @@ class Provider(ABC):
         Default returns None (no parsing).
         """
         return None
+
+    def make_chunk_parser(self) -> "ChunkParser":
+        """Return a stateful per-stream parser for this provider's SSE format.
+
+        Upstream TCP chunks do NOT align with SSE event boundaries — a single
+        'data: {...}\\n\\n' event may be split across two or more raw chunks.
+        The parser buffers partial data across feeds and returns text_delta +
+        events as each complete event lands. Provider subclasses override.
+        """
+        return _NullChunkParser()
+
+
+class ChunkParser:
+    """Base class for stateful per-stream SSE parsers.
+
+    Call `feed(chunk_bytes)` for each raw upstream chunk in order. The return
+    value is the (text_delta, events) that became complete *within that feed*
+    — text from events split across earlier chunks is attributed to the chunk
+    that completed the event.
+    """
+
+    def feed(self, chunk: bytes) -> tuple[str, list[dict]]:  # pragma: no cover
+        raise NotImplementedError
+
+
+class _NullChunkParser(ChunkParser):
+    def feed(self, chunk: bytes) -> tuple[str, list[dict]]:
+        return ("", [])
+
+
+def _iter_complete_sse_events(buf: bytes) -> tuple[list[dict], bytes]:
+    """Given an accumulated buffer, return (parsed_events, trailing_incomplete).
+
+    SSE events are separated by blank lines (\\n\\n). The final chunk of `buf`
+    may not yet be terminated; we return it as `trailing_incomplete` for the
+    caller to prepend on the next feed. Non-'data:' lines are ignored.
+    '[DONE]' sentinels are dropped.
+    """
+    # Normalize CRLF → LF first so split works regardless of line endings
+    norm = buf.replace(b"\r\n", b"\n")
+    parts = norm.split(b"\n\n")
+    # Last part is incomplete (no trailing \n\n yet)
+    incomplete = parts[-1]
+    complete = parts[:-1]
+    events: list[dict] = []
+    for part in complete:
+        for line in part.split(b"\n"):
+            line = line.strip()
+            if not line.startswith(b"data:"):
+                continue
+            payload = line[5:].strip()
+            if not payload or payload == b"[DONE]":
+                continue
+            try:
+                events.append(json.loads(payload))
+            except json.JSONDecodeError:
+                continue
+    return events, incomplete

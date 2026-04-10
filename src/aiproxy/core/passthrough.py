@@ -9,6 +9,7 @@ Phase 2 responsibilities (additions over Phase 1):
 from __future__ import annotations
 
 import asyncio
+import base64
 import time
 from collections.abc import AsyncIterator
 
@@ -257,6 +258,10 @@ class PassthroughEngine:
             final_status: str = "done"
             error_class: str | None = None
             error_message: str | None = None
+            # One stateful SSE parser per request, lazily built on first live
+            # subscriber. Events that span TCP chunk boundaries get attributed
+            # to the chunk that completes them.
+            chunk_parser = None
             try:
                 async for chunk in upstream_resp.aiter_raw():
                     ts_ns = time.monotonic_ns()
@@ -268,12 +273,18 @@ class PassthroughEngine:
 
                     # Publish to dashboard subscribers (short-circuit if no one listening)
                     if bus.has_subscribers(req_id):
+                        if chunk_parser is None:
+                            chunk_parser = provider.make_chunk_parser()
+                        text_delta, events = chunk_parser.feed(chunk)
                         bus.publish(req_id, {
                             "type": "chunk",
                             "req_id": req_id,
                             "seq": seq,
                             "offset_ns": offset_ns,
                             "size": len(chunk),
+                            "data_b64": base64.b64encode(chunk).decode("ascii"),
+                            "text_delta": text_delta,
+                            "events": events,
                         })
 
                     yield chunk

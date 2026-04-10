@@ -3,9 +3,39 @@ from __future__ import annotations
 
 import json
 
-from aiproxy.providers.base import Provider, Usage, iter_sse_data_events
+from aiproxy.providers.base import (
+    ChunkParser,
+    Provider,
+    Usage,
+    _iter_complete_sse_events,
+    iter_sse_data_events,
+)
 
 ANTHROPIC_VERSION = "2023-06-01"
+
+
+def _anthropic_delta_text(event: dict) -> str:
+    if event.get("type") != "content_block_delta":
+        return ""
+    delta = event.get("delta")
+    if isinstance(delta, dict) and delta.get("type") == "text_delta":
+        t = delta.get("text")
+        if isinstance(t, str):
+            return t
+    return ""
+
+
+class AnthropicChunkParser(ChunkParser):
+    """Stateful SSE parser for Anthropic streams (content_block_delta events)."""
+
+    def __init__(self) -> None:
+        self._buf = b""
+
+    def feed(self, chunk: bytes) -> tuple[str, list[dict]]:
+        self._buf += chunk
+        events, self._buf = _iter_complete_sse_events(self._buf)
+        text = "".join(_anthropic_delta_text(ev) for ev in events)
+        return (text, events)
 
 
 class AnthropicProvider(Provider):
@@ -71,6 +101,9 @@ class AnthropicProvider(Provider):
             output_tokens=output_tokens,
             cached_tokens=cached,
         )
+
+    def make_chunk_parser(self) -> ChunkParser:
+        return AnthropicChunkParser()
 
     @staticmethod
     def _usage_from_dict(usage: dict | None) -> Usage | None:

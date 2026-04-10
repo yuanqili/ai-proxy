@@ -282,6 +282,250 @@ a:hover { text-decoration: underline; }
 .chunk-meta { color: var(--muted); white-space: nowrap; font-family: var(--mono); font-size: 11px; min-width: 160px; }
 .chunk-preview { font-family: var(--mono); font-size: 11px; color: var(--text); word-break: break-all; }
 
+/* ── Replay panel ──────────────────────────────────────────────────── */
+#dpanel-replay { display: none; flex-direction: column; padding: 0; }
+#dpanel-replay.active { display: flex; }
+
+.replay-mode-toggle {
+  display: flex;
+  gap: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.replay-mode-btn {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: var(--mono);
+}
+.replay-mode-btn:first-child { border-radius: 4px 0 0 4px; }
+.replay-mode-btn:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+.replay-mode-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+#replay-content { flex: 1; overflow-y: auto; padding: 14px; min-height: 0; }
+#replay-empty { color: var(--muted); font-size: 12px; }
+
+/* Player mode */
+.player-screen {
+  background: var(--bg-code, #0d1117);
+  color: var(--text);
+  padding: 16px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 180px;
+  max-height: 360px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.player-screen .played { color: var(--text); }
+.player-screen .dim { color: var(--muted); opacity: 0.4; }
+.player-screen .cursor {
+  display: inline-block;
+  width: 8px;
+  background: var(--accent);
+  animation: blink 1s steps(2) infinite;
+  margin-left: -1px;
+  vertical-align: baseline;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.scrubber-wrap {
+  position: relative;
+  margin-bottom: 10px;
+  padding: 6px 0;
+}
+.scrubber-track {
+  position: relative;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.scrubber-fill {
+  position: absolute;
+  left: 0; top: 0;
+  height: 100%;
+  background: linear-gradient(to right, var(--accent), #6af);
+  border-radius: 4px;
+  pointer-events: none;
+}
+.scrubber-tick {
+  position: absolute;
+  top: -2px;
+  width: 1px;
+  height: 12px;
+  background: var(--muted);
+  opacity: 0.6;
+  pointer-events: none;
+}
+.scrubber-handle {
+  position: absolute;
+  top: -3px;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  transform: translateX(-7px);
+  cursor: grab;
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.2);
+}
+.scrubber-handle:active { cursor: grabbing; }
+
+.player-timeline {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.player-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.player-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.player-btn:hover { background: var(--border); }
+.player-btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
+.player-spacer { flex: 1; }
+.speed-group { display: flex; gap: 0; }
+.speed-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+  border-left: none;
+}
+.speed-btn:first-child { border-left: 1px solid var(--border); border-radius: 4px 0 0 4px; }
+.speed-btn:last-child { border-radius: 0 4px 4px 0; }
+.speed-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+.player-stats {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.player-stats b { color: var(--text); font-weight: 500; }
+
+.view-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 10px;
+}
+.view-toggle .view-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: var(--mono);
+  cursor: pointer;
+}
+.view-toggle .view-btn:first-child { border-radius: 4px 0 0 4px; }
+.view-toggle .view-btn:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+.view-toggle .view-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+/* JSON Log mode */
+.jsonlog-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.jsonlog-header b { color: var(--text); }
+.jsonlog-header input[type="text"] {
+  flex: 1;
+  min-width: 200px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  border-radius: 4px;
+}
+.jsonlog-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.jsonlog-table th, .jsonlog-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.jsonlog-table th { color: var(--muted); font-weight: normal; }
+.jsonlog-row { cursor: pointer; }
+.jsonlog-row:hover { background: var(--border); }
+.jsonlog-row td.preview {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jsonlog-expanded {
+  background: var(--bg-code, #0d1117);
+}
+.jsonlog-expanded pre {
+  margin: 0;
+  padding: 8px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+.jsonlog-expanded .raw-label { color: var(--muted); font-size: 10px; padding: 4px 8px 0; }
+.jsonlog-actions {
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+}
+.jsonlog-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: var(--mono);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
 /* ── Keys tab ─────────────────────────────────────────────────────── */
 #keys-page, #pricing-page, #settings-page {
   flex: 1;
@@ -454,11 +698,13 @@ a:hover { text-decoration: underline; }
           <button class="detail-tab" data-dtab="request">Request</button>
           <button class="detail-tab" data-dtab="response">Response</button>
           <button class="detail-tab" data-dtab="chunks">Chunks</button>
+          <button class="detail-tab" data-dtab="replay" id="dtab-replay">Replay</button>
         </div>
         <div class="detail-panel active" id="dpanel-overview"></div>
         <div class="detail-panel" id="dpanel-request"></div>
         <div class="detail-panel" id="dpanel-response"></div>
         <div class="detail-panel" id="dpanel-chunks"></div>
+        <div class="detail-panel" id="dpanel-replay"></div>
       </div>
     </div>
   </div>
@@ -856,6 +1102,14 @@ function renderList(rows) {
 
 async function selectRequest(reqId) {
   selectedReqId = reqId;
+  // Reset replay state for the new request
+  if (replayReqId && replayReqId !== reqId) {
+    replayData = null;
+    replayReqId = null;
+    resetPlayer();
+    closeReplayWs();
+    // Keep replayMode as user preference
+  }
   // Mark selected in list
   document.querySelectorAll(".req-row").forEach(el =>
     el.classList.toggle("selected", el.dataset.id === reqId));
@@ -865,7 +1119,7 @@ async function selectRequest(reqId) {
   content.classList.add("visible");
 
   // Clear panels and show loading
-  ["overview","request","response","chunks"].forEach(t =>
+  ["overview","request","response","chunks","replay"].forEach(t =>
     document.getElementById("dpanel-" + t).innerHTML = '<span style="color:var(--muted)">Loading…</span>');
 
   const r = await apiFetch("/dashboard/api/requests/" + encodeURIComponent(reqId));
@@ -881,6 +1135,14 @@ async function selectRequest(reqId) {
 function renderDetail(data) {
   const req = data.request;
   renderDetailHeader(req);
+
+  // Show/hide Replay tab based on is_streaming
+  const dtabReplay = document.getElementById("dtab-replay");
+  dtabReplay.style.display = req.is_streaming ? "" : "none";
+  // If non-streaming and we were on replay, fall back to overview
+  if (!req.is_streaming && detailTab === "replay") {
+    detailTab = "overview";
+  }
 
   // Activate the current detail tab
   switchDetailTab(detailTab);
@@ -901,6 +1163,10 @@ function renderDetailHeader(req) {
 }
 
 function switchDetailTab(name) {
+  if (detailTab === "replay" && name !== "replay") {
+    closeReplayWs();
+    player.liveFollow = false;
+  }
   detailTab = name;
   document.querySelectorAll(".detail-tab").forEach(b =>
     b.classList.toggle("active", b.dataset.dtab === name));
@@ -914,6 +1180,7 @@ function switchDetailTab(name) {
   else if (name === "request") renderBodyPanel("request", req);
   else if (name === "response") renderBodyPanel("response", req);
   else if (name === "chunks") renderChunks(detailData.chunks || []);
+  else if (name === "replay") renderReplay(req);
 }
 
 document.querySelectorAll(".detail-tab").forEach(btn =>
@@ -1002,6 +1269,506 @@ function renderChunks(chunks) {
       <div class="chunk-preview">${escHtml(preview)}</div>
     </div>`;
   }).join("");
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   Requests — detail — Replay tab
+   ════════════════════════════════════════════════════════════════════ */
+
+let replayData = null;       // full /replay payload for current selectedReqId
+let replayMode = "player";   // "player" | "jsonlog"
+let replayReqId = null;      // which req_id replayData belongs to
+let replayWs = null;         // WebSocket for live-follow
+
+async function renderReplay(req) {
+  const el = document.getElementById("dpanel-replay");
+
+  // If we already have replay data for this req, just re-render the current mode
+  if (replayData && replayReqId === req.req_id) {
+    renderReplayMode(req);
+    return;
+  }
+
+  el.innerHTML = '<div id="replay-empty" style="padding:14px">Loading replay…</div>';
+  const r = await apiFetch("/dashboard/api/requests/" + encodeURIComponent(req.req_id) + "/replay");
+  if (!r || !r.ok) {
+    el.innerHTML = '<div id="replay-empty" style="padding:14px">Failed to load replay.</div>';
+    return;
+  }
+  replayData = await r.json();
+  replayReqId = req.req_id;
+  renderReplayMode(req);
+}
+
+function renderReplayMode(req) {
+  const el = document.getElementById("dpanel-replay");
+  el.innerHTML = `
+    <div class="replay-mode-toggle">
+      <button class="replay-mode-btn ${replayMode === "player" ? "active" : ""}" data-rmode="player">▶ Player</button>
+      <button class="replay-mode-btn ${replayMode === "jsonlog" ? "active" : ""}" data-rmode="jsonlog">{ } JSON Log</button>
+    </div>
+    <div id="replay-content"></div>
+  `;
+  el.querySelectorAll(".replay-mode-btn").forEach(b =>
+    b.addEventListener("click", () => {
+      replayMode = b.dataset.rmode;
+      renderReplayMode(req);
+    }));
+
+  if (replayMode === "player") {
+    renderPlayer(req);
+  } else {
+    renderJsonLog(req);
+  }
+}
+
+/* Player runtime state (lives across re-renders of the same request) */
+const player = {
+  playing: false,
+  speed: 1.0,            // 0.5 | 1 | 2 | 4 | Infinity
+  view: "dim",           // "dim" | "typewriter"
+  currentNs: 0,          // current playback offset in ns
+  rafId: null,
+  lastTickMs: 0,
+  liveFollow: false,     // true when attached to live WS
+};
+
+function resetPlayer() {
+  if (player.rafId) cancelAnimationFrame(player.rafId);
+  player.playing = false;
+  player.rafId = null;
+  player.currentNs = 0;
+  player.liveFollow = false;
+}
+
+function openReplayWs(reqId) {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const url = `${proto}://${location.host}/dashboard/ws/stream/${encodeURIComponent(reqId)}`;
+  replayWs = new WebSocket(url);
+  replayWs.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === "chunk") {
+      // Append to replayData.chunks
+      if (!replayData) return;
+      replayData.chunks.push({
+        seq: ev.seq,
+        offset_ns: ev.offset_ns,
+        size: ev.size,
+        text_delta: ev.text_delta || "",
+        events: ev.events || [],
+        raw_b64: ev.data_b64 || "",
+      });
+      // Update derived fields
+      if (replayData.first_content_offset_ns == null && ev.text_delta) {
+        replayData.first_content_offset_ns = ev.offset_ns;
+      }
+      if (ev.offset_ns > (replayData.total_duration_ns || 0)) {
+        replayData.total_duration_ns = ev.offset_ns;
+      }
+      // If in live-follow mode, pin the cursor to the new right edge
+      if (player.liveFollow) {
+        player.currentNs = replayData.total_duration_ns;
+      }
+      // Re-add scrubber tick for the new chunk
+      const track = document.getElementById("scrubber-track");
+      if (track && replayData.total_duration_ns > 0) {
+        const pct = (ev.offset_ns / replayData.total_duration_ns) * 100;
+        const tick = document.createElement("div");
+        tick.className = "scrubber-tick";
+        tick.style.left = pct + "%";
+        track.appendChild(tick);
+      }
+      playerPaint();
+      // Also append to the JSON Log table if that mode is active
+      if (replayMode === "jsonlog" && typeof jsonLogAppendRow === "function") {
+        jsonLogAppendRow(replayData.chunks.length - 1);
+      }
+    } else if (ev.type === "done" || ev.type === "error") {
+      player.liveFollow = false;
+      closeReplayWs();
+    }
+    // ignore meta / heartbeat / already_done
+  };
+  replayWs.onclose = () => { replayWs = null; };
+  replayWs.onerror = () => { if (replayWs) replayWs.close(); };
+}
+
+function closeReplayWs() {
+  if (replayWs) {
+    try { replayWs.close(); } catch {}
+    replayWs = null;
+  }
+}
+
+function fmtNs(ns) {
+  if (ns == null) return "—";
+  const s = ns / 1e9;
+  if (s < 10) return "+" + s.toFixed(2) + "s";
+  return "+" + s.toFixed(1) + "s";
+}
+
+function renderPlayer(req) {
+  resetPlayer();
+  closeReplayWs();
+  const isLive = req.status === "streaming" || req.status === "pending";
+  if (isLive) {
+    player.liveFollow = true;
+    player.view = "typewriter";
+    openReplayWs(req.req_id);
+  }
+  const el = document.getElementById("replay-content");
+  if (!replayData || !replayData.chunks || !replayData.chunks.length) {
+    el.innerHTML = '<div id="replay-empty">No chunks to replay.</div>';
+    return;
+  }
+  const total = replayData.total_duration_ns || 1;
+  const firstContent = replayData.first_content_offset_ns;
+
+  // Build the player chrome
+  el.innerHTML = `
+    <div class="view-toggle">
+      <button class="view-btn ${player.view === "dim" ? "active" : ""}" data-view="dim" ${isLive ? "disabled" : ""}>Dim preview</button>
+      <button class="view-btn ${player.view === "typewriter" ? "active" : ""}" data-view="typewriter">Typewriter</button>
+    </div>
+
+    <div class="player-screen" id="player-screen"></div>
+
+    <div class="scrubber-wrap">
+      <div class="scrubber-track" id="scrubber-track">
+        <div class="scrubber-fill" id="scrubber-fill"></div>
+        <div class="scrubber-handle" id="scrubber-handle"></div>
+      </div>
+    </div>
+
+    <div class="player-timeline">
+      <span id="player-time-current">+0.00s</span>
+      <span id="player-time-total">${fmtNs(total)}</span>
+    </div>
+
+    <div class="player-controls">
+      <button class="player-btn" id="btn-restart" title="Restart">⏮</button>
+      <button class="player-btn primary" id="btn-playpause">▶</button>
+      <button class="player-btn" id="btn-stop" title="Stop">⏹</button>
+      <button class="player-btn" id="btn-ttft" title="Jump to first content" ${firstContent == null ? "disabled" : ""}>⏪ TTFT</button>
+      <div class="player-spacer"></div>
+      <div class="speed-group">
+        ${[0.5, 1, 2, 4, Infinity].map(s =>
+          `<button class="speed-btn ${player.speed === s ? "active" : ""}" data-speed="${s}">${s === Infinity ? "∞" : s + "×"}</button>`
+        ).join("")}
+      </div>
+    </div>
+
+    <div class="player-stats" id="player-stats"></div>
+  `;
+
+  // Paint scrubber ticks for every chunk with non-empty text_delta (or all chunks if none have text)
+  const track = document.getElementById("scrubber-track");
+  const tickChunks = replayData.chunks.filter(c => c.text_delta) .length > 0
+    ? replayData.chunks.filter(c => c.text_delta)
+    : replayData.chunks;
+  for (const c of tickChunks) {
+    const pct = total > 0 ? (c.offset_ns / total) * 100 : 0;
+    const tick = document.createElement("div");
+    tick.className = "scrubber-tick";
+    tick.style.left = pct + "%";
+    track.appendChild(tick);
+  }
+
+  // Wire controls
+  document.getElementById("btn-playpause").addEventListener("click", () => playerTogglePlay());
+  document.getElementById("btn-restart").addEventListener("click", () => playerSeek(0, true));
+  document.getElementById("btn-stop").addEventListener("click", () => playerStop());
+  document.getElementById("btn-ttft").addEventListener("click", () => {
+    if (firstContent != null) playerSeek(firstContent, false);
+  });
+  el.querySelectorAll(".speed-btn").forEach(b => b.addEventListener("click", () => {
+    const v = b.dataset.speed;
+    player.speed = v === "Infinity" ? Infinity : parseFloat(v);
+    el.querySelectorAll(".speed-btn").forEach(x =>
+      x.classList.toggle("active", x.dataset.speed === v));
+  }));
+  el.querySelectorAll(".view-btn").forEach(b => b.addEventListener("click", () => {
+    player.view = b.dataset.view;
+    el.querySelectorAll(".view-btn").forEach(x =>
+      x.classList.toggle("active", x.dataset.view === player.view));
+    playerPaint();
+  }));
+
+  // Click-to-seek on the track
+  track.addEventListener("click", (e) => {
+    const rect = track.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    playerSeek(pct * total, false);
+    // If user seeks away from the right edge, detach live-follow
+    if (pct < 0.99) {
+      player.liveFollow = false;
+    } else if (req.status === "streaming" || req.status === "pending") {
+      // Snapped back to the edge — re-attach
+      player.liveFollow = true;
+    }
+  });
+
+  // Reset position and paint
+  player.currentNs = 0;
+  playerPaint();
+}
+
+function playerTogglePlay() {
+  player.playing = !player.playing;
+  document.getElementById("btn-playpause").textContent = player.playing ? "⏸" : "▶";
+  if (player.playing) {
+    player.lastTickMs = performance.now();
+    player.rafId = requestAnimationFrame(playerTick);
+    // Instant mode jumps to end immediately
+    if (player.speed === Infinity) {
+      playerSeek(replayData.total_duration_ns || 0, false);
+      player.playing = false;
+      document.getElementById("btn-playpause").textContent = "▶";
+      if (player.rafId) cancelAnimationFrame(player.rafId);
+    }
+  } else if (player.rafId) {
+    cancelAnimationFrame(player.rafId);
+    player.rafId = null;
+  }
+}
+
+function playerStop() {
+  if (player.rafId) cancelAnimationFrame(player.rafId);
+  player.rafId = null;
+  player.playing = false;
+  document.getElementById("btn-playpause").textContent = "▶";
+  player.currentNs = 0;
+  playerPaint();
+}
+
+function playerSeek(ns, resetTick) {
+  player.currentNs = Math.max(0, Math.min(ns, replayData.total_duration_ns || 0));
+  if (resetTick) player.lastTickMs = performance.now();
+  playerPaint();
+}
+
+function playerTick(nowMs) {
+  if (!player.playing) return;
+  const dtMs = nowMs - player.lastTickMs;
+  player.lastTickMs = nowMs;
+  const dtNs = dtMs * 1e6 * player.speed;
+  player.currentNs += dtNs;
+  const total = replayData.total_duration_ns || 0;
+  if (player.currentNs >= total) {
+    player.currentNs = total;
+    player.playing = false;
+    document.getElementById("btn-playpause").textContent = "▶";
+    playerPaint();
+    return;
+  }
+  playerPaint();
+  player.rafId = requestAnimationFrame(playerTick);
+}
+
+function playerPaint() {
+  if (!replayData) return;
+  const total = replayData.total_duration_ns || 1;
+  const cur = player.currentNs;
+
+  // Split chunks into played / upcoming based on offset
+  let playedText = "";
+  let upcomingText = "";
+  let currentChunkIdx = -1;
+  let playedCharCount = 0;
+  let lastInterDelta = 0;
+  let sumInterDelta = 0;
+  let interCount = 0;
+  let prevOffset = 0;
+  for (let i = 0; i < replayData.chunks.length; i++) {
+    const c = replayData.chunks[i];
+    const t = c.text_delta || "";
+    if (c.offset_ns <= cur) {
+      playedText += t;
+      playedCharCount += t.length;
+      currentChunkIdx = i;
+      if (i > 0) {
+        const d = c.offset_ns - prevOffset;
+        sumInterDelta += d;
+        interCount += 1;
+        lastInterDelta = d;
+      }
+    } else {
+      upcomingText += t;
+    }
+    prevOffset = c.offset_ns;
+  }
+  const avgInterMs = interCount > 0 ? (sumInterDelta / interCount / 1e6).toFixed(1) : "—";
+  const lastInterMs = lastInterDelta > 0 ? (lastInterDelta / 1e6).toFixed(1) : "—";
+
+  // Paint screen
+  const screen = document.getElementById("player-screen");
+  if (screen) {
+    if (player.view === "dim") {
+      screen.innerHTML =
+        `<span class="played">${escHtml(playedText)}</span>` +
+        `<span class="cursor">&nbsp;</span>` +
+        `<span class="dim">${escHtml(upcomingText)}</span>`;
+    } else {
+      // typewriter
+      screen.innerHTML =
+        `<span class="played">${escHtml(playedText)}</span>` +
+        `<span class="cursor">&nbsp;</span>`;
+    }
+  }
+
+  // Paint scrubber fill + handle
+  const pct = total > 0 ? Math.max(0, Math.min(100, (cur / total) * 100)) : 0;
+  const fill = document.getElementById("scrubber-fill");
+  const handle = document.getElementById("scrubber-handle");
+  if (fill) fill.style.width = pct + "%";
+  if (handle) handle.style.left = pct + "%";
+
+  // Paint time labels
+  const tc = document.getElementById("player-time-current");
+  if (tc) tc.textContent = fmtNs(cur);
+
+  // Paint stats
+  const stats = document.getElementById("player-stats");
+  if (stats) {
+    stats.innerHTML =
+      `chunk: <b>${currentChunkIdx >= 0 ? currentChunkIdx : "—"}</b>` +
+      ` · chars: <b>${playedCharCount}</b>` +
+      ` · avg Δ: <b>${avgInterMs}ms</b>` +
+      ` · last Δ: <b>${lastInterMs}ms</b>`;
+  }
+}
+
+/* JSON Log state */
+let jsonLogFilter = "";
+let jsonLogExpandedSeq = null;   // which seq row is currently expanded
+
+function renderJsonLog(req) {
+  const el = document.getElementById("replay-content");
+  if (!replayData || !replayData.chunks || !replayData.chunks.length) {
+    el.innerHTML = '<div id="replay-empty">No chunks to replay.</div>';
+    return;
+  }
+  const totalBytes = replayData.chunks.reduce((acc, c) => acc + (c.size || 0), 0);
+  const totalDurMs = ((replayData.total_duration_ns || 0) / 1e6).toFixed(1);
+
+  el.innerHTML = `
+    <div class="jsonlog-header">
+      <span>chunks: <b>${replayData.chunks.length}</b></span>
+      <span>bytes: <b>${totalBytes}</b></span>
+      <span>span: <b>${totalDurMs}ms</b></span>
+      <input type="text" id="jsonlog-filter" placeholder="filter (plain text)…" value="${escHtml(jsonLogFilter)}" />
+      <button class="player-btn" id="jsonlog-export">Export JSON</button>
+    </div>
+    <table class="jsonlog-table">
+      <thead><tr>
+        <th style="width:40px">#</th>
+        <th style="width:80px">offset</th>
+        <th style="width:60px">size</th>
+        <th>preview</th>
+        <th style="width:160px">event_type</th>
+      </tr></thead>
+      <tbody id="jsonlog-tbody"></tbody>
+    </table>
+  `;
+
+  document.getElementById("jsonlog-filter").addEventListener("input", (e) => {
+    jsonLogFilter = e.target.value;
+    jsonLogRepaint();
+  });
+  document.getElementById("jsonlog-export").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(replayData, null, 2)], {type: "application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `replay-${req.req_id}.json`;
+    a.click();
+  });
+
+  jsonLogRepaint();
+}
+
+function jsonLogRepaint() {
+  const tbody = document.getElementById("jsonlog-tbody");
+  if (!tbody || !replayData) return;
+  const needle = jsonLogFilter.toLowerCase();
+  tbody.innerHTML = "";
+  for (let i = 0; i < replayData.chunks.length; i++) {
+    const c = replayData.chunks[i];
+    // Preview: first 80 chars of text_delta, or fallback to decoded raw_b64 first 80 chars
+    let preview = c.text_delta || "";
+    if (!preview && c.raw_b64) {
+      try {
+        preview = atob(c.raw_b64).slice(0, 80);
+      } catch { preview = ""; }
+    }
+    const eventTypes = (c.events || []).map(e => e.type || (e.choices ? "chat.completion.chunk" : "?")).join(",");
+    const rowText = `${preview} ${eventTypes} ${c.offset_ns}`;
+    if (needle && !rowText.toLowerCase().includes(needle)) continue;
+
+    const tr = document.createElement("tr");
+    tr.className = "jsonlog-row";
+    tr.dataset.seq = c.seq;
+    tr.innerHTML = `
+      <td>${c.seq}</td>
+      <td>${fmtNs(c.offset_ns)}</td>
+      <td>${c.size || 0}</td>
+      <td class="preview">${escHtml(preview)}</td>
+      <td>${escHtml(eventTypes)}</td>
+    `;
+    tr.addEventListener("click", () => jsonLogToggleExpand(c.seq));
+    tbody.appendChild(tr);
+
+    if (jsonLogExpandedSeq === c.seq) {
+      tbody.appendChild(jsonLogExpandedRow(c));
+    }
+  }
+}
+
+function jsonLogToggleExpand(seq) {
+  jsonLogExpandedSeq = jsonLogExpandedSeq === seq ? null : seq;
+  jsonLogRepaint();
+}
+
+function jsonLogExpandedRow(c) {
+  const tr = document.createElement("tr");
+  tr.className = "jsonlog-expanded";
+  const td = document.createElement("td");
+  td.colSpan = 5;
+  let rawDecoded = "";
+  try { rawDecoded = atob(c.raw_b64 || ""); } catch { rawDecoded = "(decode error)"; }
+  td.innerHTML = `
+    <pre>${escHtml(JSON.stringify(c.events || [], null, 2))}</pre>
+    <div class="raw-label">raw bytes</div>
+    <pre>${escHtml(rawDecoded)}</pre>
+    <div class="jsonlog-actions">
+      <button data-action="jump">⏵ jump player here</button>
+      <button data-action="copy-json">copy json</button>
+      <button data-action="copy-raw">copy raw</button>
+    </div>
+  `;
+  td.querySelector('[data-action="jump"]').addEventListener("click", (e) => {
+    e.stopPropagation();
+    replayMode = "player";
+    player.currentNs = c.offset_ns;
+    player.liveFollow = false;
+    renderReplayMode(detailData.request);
+  });
+  td.querySelector('[data-action="copy-json"]').addEventListener("click", (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(JSON.stringify(c.events || [], null, 2));
+  });
+  td.querySelector('[data-action="copy-raw"]').addEventListener("click", (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(rawDecoded);
+  });
+  tr.appendChild(td);
+  return tr;
+}
+
+/* Called from live WS handler when a new chunk arrives while JSON Log mode is active */
+function jsonLogAppendRow(_idx) {
+  // Cheapest correct implementation: full repaint. Row count is bounded by
+  // total chunks (typically < 500) so this is fine.
+  jsonLogRepaint();
 }
 
 /* ════════════════════════════════════════════════════════════════════
