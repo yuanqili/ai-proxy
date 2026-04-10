@@ -422,6 +422,36 @@ def create_dashboard_router(
             "pricing_count": int(pricing_count),
         })
 
+    @router.post("/api/batch/vacuum")
+    async def api_vacuum(_: dict = Depends(require_session)) -> JSONResponse:
+        if sessionmaker is None:
+            raise HTTPException(status_code=500, detail="sessionmaker not configured")
+        from sqlalchemy import text
+
+        async def _size() -> int:
+            async with sessionmaker() as s:
+                pc = (await s.execute(text("PRAGMA page_count"))).scalar() or 0
+                ps = (await s.execute(text("PRAGMA page_size"))).scalar() or 0
+                return int(pc) * int(ps)
+
+        size_before = await _size()
+
+        # VACUUM cannot run inside an explicit transaction. Pull the
+        # AsyncEngine from the sessionmaker's kwargs (the `bind` it was
+        # configured with) and open a dedicated AUTOCOMMIT connection so
+        # SQLAlchemy won't wrap our statement in a BEGIN.
+        engine = sessionmaker.kw["bind"]
+        async with engine.connect() as conn:
+            conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.exec_driver_sql("VACUUM")
+
+        size_after = await _size()
+        return JSONResponse({
+            "ok": True,
+            "db_size_bytes_before": size_before,
+            "db_size_bytes_after": size_after,
+        })
+
     # ---- protected: batch strip binaries ----
 
     _BINARY_RE = re.compile(rb"data:([^;]+);base64,[A-Za-z0-9+/=]+")
