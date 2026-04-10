@@ -209,6 +209,47 @@ def create_dashboard_router(
                 "offset": offset,
             })
 
+    @router.get("/api/requests/export")
+    async def api_request_export(
+        request: Request,
+        _: dict = Depends(require_session),
+    ) -> JSONResponse:
+        if sessionmaker is None:
+            raise HTTPException(status_code=500, detail="sessionmaker not configured")
+        qp = request.query_params
+        providers = qp.getlist("provider") or None
+        models = qp.getlist("model") or None
+        statuses = qp.getlist("status") or None
+        search = qp.get("q")
+        since = float(qp["since"]) if qp.get("since") else None
+        until = float(qp["until"]) if qp.get("until") else None
+        EXPORT_CAP = 10_000
+
+        async with sessionmaker() as s:
+            req_ids = None
+            if search:
+                req_ids = await search_requests(s, query=search, limit=EXPORT_CAP)
+                if not req_ids:
+                    return JSONResponse({
+                        "rows": [], "total": 0, "exported_at": time.time(),
+                    })
+            rows, total = await req_crud.list_with_filters(
+                s,
+                providers=providers,
+                models=models,
+                statuses=statuses,
+                since=since,
+                until=until,
+                req_ids=req_ids,
+                limit=EXPORT_CAP,
+                offset=0,
+            )
+        return JSONResponse({
+            "rows": [_serialize_row_full(r) for r in rows],
+            "total": total,
+            "exported_at": time.time(),
+        })
+
     @router.get("/api/requests/{req_id}")
     async def api_request_detail(
         req_id: str,
