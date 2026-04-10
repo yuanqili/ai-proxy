@@ -308,6 +308,151 @@ a:hover { text-decoration: underline; }
 #replay-content { flex: 1; overflow-y: auto; padding: 14px; min-height: 0; }
 #replay-empty { color: var(--muted); font-size: 12px; }
 
+/* Player mode */
+.player-screen {
+  background: var(--bg-code, #0d1117);
+  color: var(--text);
+  padding: 16px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-height: 180px;
+  max-height: 360px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+.player-screen .played { color: var(--text); }
+.player-screen .dim { color: var(--muted); opacity: 0.4; }
+.player-screen .cursor {
+  display: inline-block;
+  width: 8px;
+  background: var(--accent);
+  animation: blink 1s steps(2) infinite;
+  margin-left: -1px;
+  vertical-align: baseline;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+.scrubber-wrap {
+  position: relative;
+  margin-bottom: 10px;
+  padding: 6px 0;
+}
+.scrubber-track {
+  position: relative;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.scrubber-fill {
+  position: absolute;
+  left: 0; top: 0;
+  height: 100%;
+  background: linear-gradient(to right, var(--accent), #6af);
+  border-radius: 4px;
+  pointer-events: none;
+}
+.scrubber-tick {
+  position: absolute;
+  top: -2px;
+  width: 1px;
+  height: 12px;
+  background: var(--muted);
+  opacity: 0.6;
+  pointer-events: none;
+}
+.scrubber-handle {
+  position: absolute;
+  top: -3px;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  transform: translateX(-7px);
+  cursor: grab;
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.2);
+}
+.scrubber-handle:active { cursor: grabbing; }
+
+.player-timeline {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.player-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.player-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.player-btn:hover { background: var(--border); }
+.player-btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
+.player-spacer { flex: 1; }
+.speed-group { display: flex; gap: 0; }
+.speed-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+  border-left: none;
+}
+.speed-btn:first-child { border-left: 1px solid var(--border); border-radius: 4px 0 0 4px; }
+.speed-btn:last-child { border-radius: 0 4px 4px 0; }
+.speed-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+
+.player-stats {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+}
+.player-stats b { color: var(--text); font-weight: 500; }
+
+.view-toggle {
+  display: flex;
+  gap: 0;
+  margin-bottom: 10px;
+}
+.view-toggle .view-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 3px 10px;
+  font-size: 11px;
+  font-family: var(--mono);
+  cursor: pointer;
+}
+.view-toggle .view-btn:first-child { border-radius: 4px 0 0 4px; }
+.view-toggle .view-btn:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+.view-toggle .view-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+
 /* ── Keys tab ─────────────────────────────────────────────────────── */
 #keys-page, #pricing-page, #settings-page {
   flex: 1;
@@ -888,6 +1033,7 @@ async function selectRequest(reqId) {
   if (replayReqId && replayReqId !== reqId) {
     replayData = null;
     replayReqId = null;
+    resetPlayer();
     // Keep replayMode as user preference
   }
   // Mark selected in list
@@ -1097,14 +1243,253 @@ function renderReplayMode(req) {
   }
 }
 
+/* Player runtime state (lives across re-renders of the same request) */
+const player = {
+  playing: false,
+  speed: 1.0,            // 0.5 | 1 | 2 | 4 | Infinity
+  view: "dim",           // "dim" | "typewriter"
+  currentNs: 0,          // current playback offset in ns
+  rafId: null,
+  lastTickMs: 0,
+  liveFollow: false,     // true when attached to live WS
+};
+
+function resetPlayer() {
+  if (player.rafId) cancelAnimationFrame(player.rafId);
+  player.playing = false;
+  player.rafId = null;
+  player.currentNs = 0;
+  player.liveFollow = false;
+}
+
+function fmtNs(ns) {
+  if (ns == null) return "—";
+  const s = ns / 1e9;
+  if (s < 10) return "+" + s.toFixed(2) + "s";
+  return "+" + s.toFixed(1) + "s";
+}
+
 function renderPlayer(req) {
+  resetPlayer();
   const el = document.getElementById("replay-content");
   if (!replayData || !replayData.chunks || !replayData.chunks.length) {
     el.innerHTML = '<div id="replay-empty">No chunks to replay.</div>';
     return;
   }
-  // Task 5 implements this fully. For now, just show a summary.
-  el.innerHTML = `<div id="replay-empty">Player mode — ${replayData.chunks.length} chunks, total_duration_ns=${replayData.total_duration_ns}</div>`;
+  const total = replayData.total_duration_ns || 1;
+  const firstContent = replayData.first_content_offset_ns;
+  const isLive = req.status === "streaming" || req.status === "pending";
+
+  // Build the player chrome
+  el.innerHTML = `
+    <div class="view-toggle">
+      <button class="view-btn ${player.view === "dim" ? "active" : ""}" data-view="dim" ${isLive ? "disabled" : ""}>Dim preview</button>
+      <button class="view-btn ${player.view === "typewriter" ? "active" : ""}" data-view="typewriter">Typewriter</button>
+    </div>
+
+    <div class="player-screen" id="player-screen"></div>
+
+    <div class="scrubber-wrap">
+      <div class="scrubber-track" id="scrubber-track">
+        <div class="scrubber-fill" id="scrubber-fill"></div>
+        <div class="scrubber-handle" id="scrubber-handle"></div>
+      </div>
+    </div>
+
+    <div class="player-timeline">
+      <span id="player-time-current">+0.00s</span>
+      <span id="player-time-total">${fmtNs(total)}</span>
+    </div>
+
+    <div class="player-controls">
+      <button class="player-btn" id="btn-restart" title="Restart">⏮</button>
+      <button class="player-btn primary" id="btn-playpause">▶</button>
+      <button class="player-btn" id="btn-stop" title="Stop">⏹</button>
+      <button class="player-btn" id="btn-ttft" title="Jump to first content" ${firstContent == null ? "disabled" : ""}>⏪ TTFT</button>
+      <div class="player-spacer"></div>
+      <div class="speed-group">
+        ${[0.5, 1, 2, 4, Infinity].map(s =>
+          `<button class="speed-btn ${player.speed === s ? "active" : ""}" data-speed="${s}">${s === Infinity ? "∞" : s + "×"}</button>`
+        ).join("")}
+      </div>
+    </div>
+
+    <div class="player-stats" id="player-stats"></div>
+  `;
+
+  // Paint scrubber ticks for every chunk with non-empty text_delta (or all chunks if none have text)
+  const track = document.getElementById("scrubber-track");
+  const tickChunks = replayData.chunks.filter(c => c.text_delta) .length > 0
+    ? replayData.chunks.filter(c => c.text_delta)
+    : replayData.chunks;
+  for (const c of tickChunks) {
+    const pct = total > 0 ? (c.offset_ns / total) * 100 : 0;
+    const tick = document.createElement("div");
+    tick.className = "scrubber-tick";
+    tick.style.left = pct + "%";
+    track.appendChild(tick);
+  }
+
+  // Wire controls
+  document.getElementById("btn-playpause").addEventListener("click", () => playerTogglePlay());
+  document.getElementById("btn-restart").addEventListener("click", () => playerSeek(0, true));
+  document.getElementById("btn-stop").addEventListener("click", () => playerStop());
+  document.getElementById("btn-ttft").addEventListener("click", () => {
+    if (firstContent != null) playerSeek(firstContent, false);
+  });
+  el.querySelectorAll(".speed-btn").forEach(b => b.addEventListener("click", () => {
+    const v = b.dataset.speed;
+    player.speed = v === "Infinity" ? Infinity : parseFloat(v);
+    el.querySelectorAll(".speed-btn").forEach(x =>
+      x.classList.toggle("active", x.dataset.speed === v));
+  }));
+  el.querySelectorAll(".view-btn").forEach(b => b.addEventListener("click", () => {
+    player.view = b.dataset.view;
+    el.querySelectorAll(".view-btn").forEach(x =>
+      x.classList.toggle("active", x.dataset.view === player.view));
+    playerPaint();
+  }));
+
+  // Click-to-seek on the track
+  track.addEventListener("click", (e) => {
+    const rect = track.getBoundingClientRect();
+    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    playerSeek(pct * total, false);
+  });
+
+  // For live streams, hide the dim view (only typewriter makes sense)
+  if (isLive) {
+    player.view = "typewriter";
+  }
+
+  // Reset position and paint
+  player.currentNs = 0;
+  playerPaint();
+}
+
+function playerTogglePlay() {
+  player.playing = !player.playing;
+  document.getElementById("btn-playpause").textContent = player.playing ? "⏸" : "▶";
+  if (player.playing) {
+    player.lastTickMs = performance.now();
+    player.rafId = requestAnimationFrame(playerTick);
+    // Instant mode jumps to end immediately
+    if (player.speed === Infinity) {
+      playerSeek(replayData.total_duration_ns || 0, false);
+      player.playing = false;
+      document.getElementById("btn-playpause").textContent = "▶";
+      if (player.rafId) cancelAnimationFrame(player.rafId);
+    }
+  } else if (player.rafId) {
+    cancelAnimationFrame(player.rafId);
+    player.rafId = null;
+  }
+}
+
+function playerStop() {
+  if (player.rafId) cancelAnimationFrame(player.rafId);
+  player.rafId = null;
+  player.playing = false;
+  document.getElementById("btn-playpause").textContent = "▶";
+  player.currentNs = 0;
+  playerPaint();
+}
+
+function playerSeek(ns, resetTick) {
+  player.currentNs = Math.max(0, Math.min(ns, replayData.total_duration_ns || 0));
+  if (resetTick) player.lastTickMs = performance.now();
+  playerPaint();
+}
+
+function playerTick(nowMs) {
+  if (!player.playing) return;
+  const dtMs = nowMs - player.lastTickMs;
+  player.lastTickMs = nowMs;
+  const dtNs = dtMs * 1e6 * player.speed;
+  player.currentNs += dtNs;
+  const total = replayData.total_duration_ns || 0;
+  if (player.currentNs >= total) {
+    player.currentNs = total;
+    player.playing = false;
+    document.getElementById("btn-playpause").textContent = "▶";
+    playerPaint();
+    return;
+  }
+  playerPaint();
+  player.rafId = requestAnimationFrame(playerTick);
+}
+
+function playerPaint() {
+  if (!replayData) return;
+  const total = replayData.total_duration_ns || 1;
+  const cur = player.currentNs;
+
+  // Split chunks into played / upcoming based on offset
+  let playedText = "";
+  let upcomingText = "";
+  let currentChunkIdx = -1;
+  let playedCharCount = 0;
+  let lastInterDelta = 0;
+  let sumInterDelta = 0;
+  let interCount = 0;
+  let prevOffset = 0;
+  for (let i = 0; i < replayData.chunks.length; i++) {
+    const c = replayData.chunks[i];
+    const t = c.text_delta || "";
+    if (c.offset_ns <= cur) {
+      playedText += t;
+      playedCharCount += t.length;
+      currentChunkIdx = i;
+      if (i > 0) {
+        const d = c.offset_ns - prevOffset;
+        sumInterDelta += d;
+        interCount += 1;
+        lastInterDelta = d;
+      }
+    } else {
+      upcomingText += t;
+    }
+    prevOffset = c.offset_ns;
+  }
+  const avgInterMs = interCount > 0 ? (sumInterDelta / interCount / 1e6).toFixed(1) : "—";
+  const lastInterMs = lastInterDelta > 0 ? (lastInterDelta / 1e6).toFixed(1) : "—";
+
+  // Paint screen
+  const screen = document.getElementById("player-screen");
+  if (screen) {
+    if (player.view === "dim") {
+      screen.innerHTML =
+        `<span class="played">${escHtml(playedText)}</span>` +
+        `<span class="cursor">&nbsp;</span>` +
+        `<span class="dim">${escHtml(upcomingText)}</span>`;
+    } else {
+      // typewriter
+      screen.innerHTML =
+        `<span class="played">${escHtml(playedText)}</span>` +
+        `<span class="cursor">&nbsp;</span>`;
+    }
+  }
+
+  // Paint scrubber fill + handle
+  const pct = total > 0 ? Math.max(0, Math.min(100, (cur / total) * 100)) : 0;
+  const fill = document.getElementById("scrubber-fill");
+  const handle = document.getElementById("scrubber-handle");
+  if (fill) fill.style.width = pct + "%";
+  if (handle) handle.style.left = pct + "%";
+
+  // Paint time labels
+  const tc = document.getElementById("player-time-current");
+  if (tc) tc.textContent = fmtNs(cur);
+
+  // Paint stats
+  const stats = document.getElementById("player-stats");
+  if (stats) {
+    stats.innerHTML =
+      `chunk: <b>${currentChunkIdx >= 0 ? currentChunkIdx : "—"}</b>` +
+      ` · chars: <b>${playedCharCount}</b>` +
+      ` · avg Δ: <b>${avgInterMs}ms</b>` +
+      ` · last Δ: <b>${lastInterMs}ms</b>`;
+  }
 }
 
 function renderJsonLog(req) {
