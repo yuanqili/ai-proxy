@@ -76,8 +76,11 @@ def build_app(
     app.state.sessionmaker = sessionmaker
     app.state.bus = bus
     app.state.registry = registry
-    app.include_router(create_router(engine=engine, providers=providers, cache=cache))
+    # Dashboard router must be registered BEFORE the proxy dispatcher.
+    # The proxy dispatcher uses `/{provider}/{full_path:path}` which would
+    # otherwise swallow `/dashboard/*` requests as "unknown provider: dashboard".
     app.include_router(create_dashboard_router(bus=bus, registry=registry))
+    app.include_router(create_router(engine=engine, providers=providers, cache=cache))
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
@@ -116,8 +119,9 @@ async def lifespan(app: FastAPI):
     )
     cache = ApiKeyCache(sessionmaker, ttl_seconds=60)
 
-    app.include_router(create_router(engine=engine, providers=providers, cache=cache))
+    # Dashboard router must be registered BEFORE the proxy dispatcher (see build_app).
     app.include_router(create_dashboard_router(bus=bus, registry=registry))
+    app.include_router(create_router(engine=engine, providers=providers, cache=cache))
     app.state.http_client = http_client
     app.state.sessionmaker = sessionmaker
     app.state.bus = bus

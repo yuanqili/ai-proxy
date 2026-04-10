@@ -201,6 +201,10 @@ class PassthroughEngine:
         upstream_url = f"{provider.base_url}{provider.map_path(client_path)}"
         upstream_headers = clean_upstream_headers(client_headers)
         upstream_headers = provider.inject_auth(upstream_headers)
+        # Force uncompressed responses so _finalize can parse usage from the body.
+        # httpx would otherwise set Accept-Encoding: gzip,deflate automatically,
+        # and our response buffer would be opaque compressed bytes.
+        upstream_headers["accept-encoding"] = "identity"
 
         upstream_req = self._client.build_request(
             method=method,

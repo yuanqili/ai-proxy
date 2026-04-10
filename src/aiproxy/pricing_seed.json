@@ -41,6 +41,34 @@
       "input_per_1m_usd": 15.00,
       "output_per_1m_usd": 75.00,
       "cached_per_1m_usd": 1.50
+    },
+    {
+      "provider": "openrouter",
+      "model": "openai/gpt-4o",
+      "input_per_1m_usd": 2.50,
+      "output_per_1m_usd": 10.00,
+      "cached_per_1m_usd": 1.25
+    },
+    {
+      "provider": "openrouter",
+      "model": "openai/gpt-4o-mini",
+      "input_per_1m_usd": 0.15,
+      "output_per_1m_usd": 0.60,
+      "cached_per_1m_usd": 0.075
+    },
+    {
+      "provider": "openrouter",
+      "model": "anthropic/claude-sonnet-4-5",
+      "input_per_1m_usd": 3.00,
+      "output_per_1m_usd": 15.00,
+      "cached_per_1m_usd": 0.30
+    },
+    {
+      "provider": "openrouter",
+      "model": "anthropic/claude-haiku-4-5",
+      "input_per_1m_usd": 0.80,
+      "output_per_1m_usd": 4.00,
+      "cached_per_1m_usd": 0.08
     }
   ]
 }
