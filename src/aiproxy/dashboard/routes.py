@@ -392,6 +392,36 @@ def create_dashboard_router(
             await s.commit()
         return JSONResponse({"ok": True, "key": body.key, "value": body.value})
 
+    # ---- protected: database stats + vacuum ----
+
+    @router.get("/api/stats/db")
+    async def api_db_stats(_: dict = Depends(require_session)) -> JSONResponse:
+        if sessionmaker is None:
+            raise HTTPException(status_code=500, detail="sessionmaker not configured")
+        from sqlalchemy import func, select, text
+
+        from aiproxy.db.models import Chunk as _Chunk
+        from aiproxy.db.models import Pricing as _Pricing
+        async with sessionmaker() as s:
+            req_count = (await s.execute(
+                select(func.count()).select_from(RequestModel)
+            )).scalar() or 0
+            chunk_count = (await s.execute(
+                select(func.count()).select_from(_Chunk)
+            )).scalar() or 0
+            pricing_count = (await s.execute(
+                select(func.count()).select_from(_Pricing)
+            )).scalar() or 0
+            page_count = (await s.execute(text("PRAGMA page_count"))).scalar() or 0
+            page_size = (await s.execute(text("PRAGMA page_size"))).scalar() or 0
+            db_size_bytes = int(page_count) * int(page_size)
+        return JSONResponse({
+            "db_size_bytes": db_size_bytes,
+            "request_count": int(req_count),
+            "chunk_count": int(chunk_count),
+            "pricing_count": int(pricing_count),
+        })
+
     # ---- protected: batch strip binaries ----
 
     _BINARY_RE = re.compile(rb"data:([^;]+);base64,[A-Za-z0-9+/=]+")
