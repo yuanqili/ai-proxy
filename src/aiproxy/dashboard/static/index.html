@@ -453,6 +453,79 @@ a:hover { text-decoration: underline; }
 .view-toggle .view-btn:last-child { border-radius: 0 4px 4px 0; border-left: none; }
 .view-toggle .view-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
 
+/* JSON Log mode */
+.jsonlog-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.jsonlog-header b { color: var(--text); }
+.jsonlog-header input[type="text"] {
+  flex: 1;
+  min-width: 200px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  border-radius: 4px;
+}
+.jsonlog-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.jsonlog-table th, .jsonlog-table td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.jsonlog-table th { color: var(--muted); font-weight: normal; }
+.jsonlog-row { cursor: pointer; }
+.jsonlog-row:hover { background: var(--border); }
+.jsonlog-row td.preview {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.jsonlog-expanded {
+  background: var(--bg-code, #0d1117);
+}
+.jsonlog-expanded pre {
+  margin: 0;
+  padding: 8px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+.jsonlog-expanded .raw-label { color: var(--muted); font-size: 10px; padding: 4px 8px 0; }
+.jsonlog-actions {
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+}
+.jsonlog-actions button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: var(--mono);
+  cursor: pointer;
+  border-radius: 3px;
+}
+
 /* ── Keys tab ─────────────────────────────────────────────────────── */
 #keys-page, #pricing-page, #settings-page {
   flex: 1;
@@ -1565,14 +1638,137 @@ function playerPaint() {
   }
 }
 
+/* JSON Log state */
+let jsonLogFilter = "";
+let jsonLogExpandedSeq = null;   // which seq row is currently expanded
+
 function renderJsonLog(req) {
   const el = document.getElementById("replay-content");
   if (!replayData || !replayData.chunks || !replayData.chunks.length) {
     el.innerHTML = '<div id="replay-empty">No chunks to replay.</div>';
     return;
   }
-  // Task 7 implements this fully. For now, just a count.
-  el.innerHTML = `<div id="replay-empty">JSON Log mode — ${replayData.chunks.length} chunks</div>`;
+  const totalBytes = replayData.chunks.reduce((acc, c) => acc + (c.size || 0), 0);
+  const totalDurMs = ((replayData.total_duration_ns || 0) / 1e6).toFixed(1);
+
+  el.innerHTML = `
+    <div class="jsonlog-header">
+      <span>chunks: <b>${replayData.chunks.length}</b></span>
+      <span>bytes: <b>${totalBytes}</b></span>
+      <span>span: <b>${totalDurMs}ms</b></span>
+      <input type="text" id="jsonlog-filter" placeholder="filter (plain text)…" value="${escHtml(jsonLogFilter)}" />
+      <button class="player-btn" id="jsonlog-export">Export JSON</button>
+    </div>
+    <table class="jsonlog-table">
+      <thead><tr>
+        <th style="width:40px">#</th>
+        <th style="width:80px">offset</th>
+        <th style="width:60px">size</th>
+        <th>preview</th>
+        <th style="width:160px">event_type</th>
+      </tr></thead>
+      <tbody id="jsonlog-tbody"></tbody>
+    </table>
+  `;
+
+  document.getElementById("jsonlog-filter").addEventListener("input", (e) => {
+    jsonLogFilter = e.target.value;
+    jsonLogRepaint();
+  });
+  document.getElementById("jsonlog-export").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(replayData, null, 2)], {type: "application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `replay-${req.req_id}.json`;
+    a.click();
+  });
+
+  jsonLogRepaint();
+}
+
+function jsonLogRepaint() {
+  const tbody = document.getElementById("jsonlog-tbody");
+  if (!tbody || !replayData) return;
+  const needle = jsonLogFilter.toLowerCase();
+  tbody.innerHTML = "";
+  for (let i = 0; i < replayData.chunks.length; i++) {
+    const c = replayData.chunks[i];
+    // Preview: first 80 chars of text_delta, or fallback to decoded raw_b64 first 80 chars
+    let preview = c.text_delta || "";
+    if (!preview && c.raw_b64) {
+      try {
+        preview = atob(c.raw_b64).slice(0, 80);
+      } catch { preview = ""; }
+    }
+    const eventTypes = (c.events || []).map(e => e.type || (e.choices ? "chat.completion.chunk" : "?")).join(",");
+    const rowText = `${preview} ${eventTypes} ${c.offset_ns}`;
+    if (needle && !rowText.toLowerCase().includes(needle)) continue;
+
+    const tr = document.createElement("tr");
+    tr.className = "jsonlog-row";
+    tr.dataset.seq = c.seq;
+    tr.innerHTML = `
+      <td>${c.seq}</td>
+      <td>${fmtNs(c.offset_ns)}</td>
+      <td>${c.size || 0}</td>
+      <td class="preview">${escHtml(preview)}</td>
+      <td>${escHtml(eventTypes)}</td>
+    `;
+    tr.addEventListener("click", () => jsonLogToggleExpand(c.seq));
+    tbody.appendChild(tr);
+
+    if (jsonLogExpandedSeq === c.seq) {
+      tbody.appendChild(jsonLogExpandedRow(c));
+    }
+  }
+}
+
+function jsonLogToggleExpand(seq) {
+  jsonLogExpandedSeq = jsonLogExpandedSeq === seq ? null : seq;
+  jsonLogRepaint();
+}
+
+function jsonLogExpandedRow(c) {
+  const tr = document.createElement("tr");
+  tr.className = "jsonlog-expanded";
+  const td = document.createElement("td");
+  td.colSpan = 5;
+  let rawDecoded = "";
+  try { rawDecoded = atob(c.raw_b64 || ""); } catch { rawDecoded = "(decode error)"; }
+  td.innerHTML = `
+    <pre>${escHtml(JSON.stringify(c.events || [], null, 2))}</pre>
+    <div class="raw-label">raw bytes</div>
+    <pre>${escHtml(rawDecoded)}</pre>
+    <div class="jsonlog-actions">
+      <button data-action="jump">⏵ jump player here</button>
+      <button data-action="copy-json">copy json</button>
+      <button data-action="copy-raw">copy raw</button>
+    </div>
+  `;
+  td.querySelector('[data-action="jump"]').addEventListener("click", (e) => {
+    e.stopPropagation();
+    replayMode = "player";
+    player.currentNs = c.offset_ns;
+    player.liveFollow = false;
+    renderReplayMode(detailData.request);
+  });
+  td.querySelector('[data-action="copy-json"]').addEventListener("click", (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(JSON.stringify(c.events || [], null, 2));
+  });
+  td.querySelector('[data-action="copy-raw"]').addEventListener("click", (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(rawDecoded);
+  });
+  tr.appendChild(td);
+  return tr;
+}
+
+/* Called from live WS handler when a new chunk arrives while JSON Log mode is active */
+function jsonLogAppendRow(_idx) {
+  // Cheapest correct implementation: full repaint. Row count is bounded by
+  // total chunks (typically < 500) so this is fine.
+  jsonLogRepaint();
 }
 
 /* ════════════════════════════════════════════════════════════════════
