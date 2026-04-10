@@ -23,7 +23,9 @@ from aiproxy.auth.proxy_auth import ApiKeyCache
 from aiproxy.bus import StreamBus
 from aiproxy.core.passthrough import PassthroughEngine
 from aiproxy.dashboard.routes import create_dashboard_router
+from aiproxy.db.crud import config as config_crud
 from aiproxy.db.engine import create_engine_and_sessionmaker
+from aiproxy.db.fts import install_fts_schema
 from aiproxy.db.models import Base
 from aiproxy.db.retention import retention_loop
 from aiproxy.pricing.seed import seed_pricing_if_empty
@@ -79,7 +81,14 @@ def build_app(
     # Dashboard router must be registered BEFORE the proxy dispatcher.
     # The proxy dispatcher uses `/{provider}/{full_path:path}` which would
     # otherwise swallow `/dashboard/*` requests as "unknown provider: dashboard".
-    app.include_router(create_dashboard_router(bus=bus, registry=registry))
+    app.include_router(create_dashboard_router(
+        bus=bus,
+        registry=registry,
+        sessionmaker=sessionmaker,
+        master_key=settings.proxy_master_key,
+        session_secret=settings.session_secret,
+        secure_cookies=settings.secure_cookies,
+    ))
     app.include_router(create_router(engine=engine, providers=providers, cache=cache))
 
     @app.get("/healthz")
@@ -96,6 +105,7 @@ async def lifespan(app: FastAPI):
     sql_engine, sessionmaker = create_engine_and_sessionmaker(settings.database_url)
     async with sql_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await install_fts_schema(conn)
 
     # Seed pricing if the table is empty (first-run bootstrap)
     await seed_pricing_if_empty(sessionmaker)
@@ -120,17 +130,28 @@ async def lifespan(app: FastAPI):
     cache = ApiKeyCache(sessionmaker, ttl_seconds=60)
 
     # Dashboard router must be registered BEFORE the proxy dispatcher (see build_app).
-    app.include_router(create_dashboard_router(bus=bus, registry=registry))
+    app.include_router(create_dashboard_router(
+        bus=bus,
+        registry=registry,
+        sessionmaker=sessionmaker,
+        master_key=settings.proxy_master_key,
+        session_secret=settings.session_secret,
+        secure_cookies=settings.secure_cookies,
+    ))
     app.include_router(create_router(engine=engine, providers=providers, cache=cache))
     app.state.http_client = http_client
     app.state.sessionmaker = sessionmaker
     app.state.bus = bus
     app.state.registry = registry
 
-    # Background retention task — reads threshold from settings
+    # Background retention task — reads threshold from the config table
+    async def _get_full_count() -> int:
+        async with sessionmaker() as s:
+            return int(await config_crud.get(s, "retention.full_count", default=500))
+
     retention_task = asyncio.create_task(retention_loop(
         sessionmaker,
-        get_full_count=lambda: 500,  # TODO(phase-3): read from config table
+        get_full_count=_get_full_count,
         interval_seconds=60.0,
     ))
 
