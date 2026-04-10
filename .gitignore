@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# uv
+.python-version
+
+# Environment
+.env
+.env.local
+
+# Databases
+*.sqlite
+*.sqlite3
+*.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Brainstorm session files
+.superpowers/

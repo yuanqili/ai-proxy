@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>AI Proxy Dashboard</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --panel: #161b22;
+    --border: #2d333b;
+    --text: #c9d1d9;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --err: #f85149;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.5 -apple-system, Segoe UI, sans-serif;
+    display: grid;
+    grid-template-rows: auto 1fr;
+  }
+  header {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header h1 { font-size: 14px; margin: 0; font-weight: 600; }
+  .conn { font-size: 11px; padding: 2px 8px; border-radius: 10px; }
+  .conn.ok { background: rgba(63,185,80,0.15); color: var(--ok); }
+  .conn.bad { background: rgba(248,81,73,0.15); color: var(--err); }
+
+  main {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    min-height: 0;
+  }
+  aside {
+    border-right: 1px solid var(--border);
+    overflow-y: auto;
+    background: var(--panel);
+  }
+  .req {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .req:hover { background: rgba(88,166,255,0.05); }
+  .req.active { background: rgba(88,166,255,0.12); border-left: 2px solid var(--accent); padding-left: 12px; }
+  .req-top {
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: var(--mono); font-size: 11px;
+  }
+  .req-id { color: var(--accent); }
+  .req-status { font-size: 10px; padding: 1px 6px; border-radius: 8px; text-transform: uppercase; }
+  .req-status.pending { background: rgba(139,148,158,0.2); color: var(--muted); }
+  .req-status.streaming { background: rgba(210,153,34,0.2); color: var(--warn); }
+  .req-status.done { background: rgba(63,185,80,0.2); color: var(--ok); }
+  .req-status.error { background: rgba(248,81,73,0.2); color: var(--err); }
+  .req-meta { margin-top: 4px; color: var(--muted); font-size: 11px; }
+  .req-meta b { color: var(--text); font-weight: 500; }
+
+  section.viewer {
+    display: flex; flex-direction: column;
+    min-height: 0;
+    padding: 16px;
+  }
+  .viewer-header {
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 10px;
+  }
+  .viewer-header h2 { font-size: 13px; margin: 0; font-family: var(--mono); }
+  .viewer-stats { margin-top: 6px; color: var(--muted); font-size: 11px; }
+  .viewer-stats span { margin-right: 14px; }
+  .viewer-stats b { color: var(--text); }
+
+  .rendered, .raw {
+    flex: 1; min-height: 0;
+    overflow-y: auto;
+    padding: 12px;
+    background: #0a0d12;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: var(--mono);
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .rendered { margin-bottom: 10px; }
+  .rendered.empty, .raw.empty { color: var(--muted); font-style: italic; }
+
+  .tabs { display: flex; gap: 4px; margin-bottom: 6px; }
+  .tab {
+    padding: 4px 12px; font-size: 11px; border-radius: 4px;
+    cursor: pointer; color: var(--muted); background: transparent;
+    border: 1px solid var(--border);
+  }
+  .tab.active { color: var(--text); background: var(--panel); border-color: var(--accent); }
+
+  .placeholder {
+    display: flex; align-items: center; justify-content: center;
+    flex: 1; color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI Proxy — Live Dashboard</h1>
+  <span id="conn" class="conn bad">disconnected</span>
+  <span style="color: var(--muted); font-size: 11px;">click any request to tap its stream</span>
+</header>
+
+<main>
+  <aside id="list"></aside>
+  <section class="viewer" id="viewer">
+    <div class="placeholder">select a request on the left</div>
+  </section>
+</main>
+
+<script>
+const listEl = document.getElementById('list');
+const viewerEl = document.getElementById('viewer');
+const connEl = document.getElementById('conn');
+
+let requests = new Map();   // req_id -> meta
+let selectedId = null;
+let streamSock = null;
+let viewMode = 'rendered';  // 'rendered' | 'raw'
+let rendered = '';          // accumulated text (only deltas)
+let raw = '';               // accumulated raw chunks
+
+function fmtTime(ts) {
+  if (!ts) return '';
+  return new Date(ts * 1000).toLocaleTimeString();
+}
+
+function fmtDuration(meta) {
+  const end = meta.finished_at || Date.now() / 1000;
+  const ms = (end - meta.started_at) * 1000;
+  return ms < 1000 ? ms.toFixed(0) + 'ms' : (ms / 1000).toFixed(2) + 's';
+}
+
+function renderList() {
+  const sorted = [...requests.values()].sort((a, b) => b.started_at - a.started_at);
+  listEl.innerHTML = '';
+  for (const m of sorted) {
+    const div = document.createElement('div');
+    div.className = 'req' + (m.req_id === selectedId ? ' active' : '');
+    div.onclick = () => selectRequest(m.req_id);
+    div.innerHTML = `
+      <div class="req-top">
+        <span class="req-id">${m.req_id}</span>
+        <span class="req-status ${m.status}">${m.status}</span>
+      </div>
+      <div class="req-meta">
+        <b>${m.method}</b> ${m.path}
+        ${m.model ? ' · <b>' + m.model + '</b>' : ''}
+      </div>
+      <div class="req-meta">
+        ${fmtTime(m.started_at)} · ${fmtDuration(m)}
+        ${m.chunks ? ' · ' + m.chunks + ' chunks' : ''}
+        ${m.bytes_out ? ' · ' + m.bytes_out + 'B' : ''}
+      </div>
+    `;
+    listEl.appendChild(div);
+  }
+}
+
+function renderViewer() {
+  if (!selectedId) {
+    viewerEl.innerHTML = '<div class="placeholder">select a request on the left</div>';
+    return;
+  }
+  const m = requests.get(selectedId);
+  if (!m) {
+    viewerEl.innerHTML = '<div class="placeholder">request not found</div>';
+    return;
+  }
+  viewerEl.innerHTML = `
+    <div class="viewer-header">
+      <h2>${m.req_id} · <span class="req-status ${m.status}">${m.status}</span></h2>
+      <div class="viewer-stats">
+        <span><b>${m.method}</b> ${m.path}</span>
+        <span>model: <b>${m.model || '—'}</b></span>
+        <span>status: <b>${m.status_code || '—'}</b></span>
+        <span>chunks: <b id="v-chunks">${m.chunks || 0}</b></span>
+        <span>bytes: <b id="v-bytes">${m.bytes_out || 0}</b></span>
+        <span>duration: <b id="v-dur">${fmtDuration(m)}</b></span>
+      </div>
+    </div>
+    <div class="tabs">
+      <button class="tab ${viewMode === 'rendered' ? 'active' : ''}" onclick="setMode('rendered')">Rendered</button>
+      <button class="tab ${viewMode === 'raw' ? 'active' : ''}" onclick="setMode('raw')">Raw SSE</button>
+    </div>
+    <div id="body" class="${viewMode}"></div>
+  `;
+  updateBody();
+}
+
+function setMode(mode) {
+  viewMode = mode;
+  renderViewer();
+}
+
+function updateBody() {
+  const el = document.getElementById('body');
+  if (!el) return;
+  const content = viewMode === 'rendered' ? rendered : raw;
+  if (!content) {
+    el.className += ' empty';
+    el.textContent = viewMode === 'rendered'
+      ? 'waiting for tokens…  (shows parsed OpenAI-SSE delta.content)'
+      : 'waiting for chunks…  (shows raw SSE lines from upstream)';
+  } else {
+    el.textContent = content;
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+function updateStats(m) {
+  const c = document.getElementById('v-chunks');
+  const b = document.getElementById('v-bytes');
+  const d = document.getElementById('v-dur');
+  if (c) c.textContent = m.chunks || 0;
+  if (b) b.textContent = m.bytes_out || 0;
+  if (d) d.textContent = fmtDuration(m);
+}
+
+// Parse OpenAI-style SSE chunk and extract delta.content tokens.
+function extractDelta(text) {
+  let out = '';
+  for (const line of text.split('\n')) {
+    if (!line.startsWith('data:')) continue;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === '[DONE]') continue;
+    try {
+      const obj = JSON.parse(payload);
+      // OpenAI chat.completions streaming format
+      const delta = obj.choices?.[0]?.delta?.content;
+      if (typeof delta === 'string') out += delta;
+    } catch (e) { /* ignore non-JSON */ }
+  }
+  return out;
+}
+
+function selectRequest(reqId) {
+  if (streamSock) {
+    streamSock.close();
+    streamSock = null;
+  }
+  selectedId = reqId;
+  rendered = '';
+  raw = '';
+  renderList();
+  renderViewer();
+
+  const url = `ws://${location.host}/dashboard/ws/stream/${reqId}`;
+  streamSock = new WebSocket(url);
+  streamSock.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'chunk') {
+      if (ev.text) {
+        raw += ev.text;
+        rendered += extractDelta(ev.text);
+      } else if (ev.b64) {
+        raw += `[binary ${ev.size}B]\n`;
+      }
+      updateBody();
+    } else if (ev.type === 'done' || ev.type === 'error' || ev.type === 'already_done') {
+      // one final refresh
+      updateBody();
+    }
+  };
+  streamSock.onclose = () => {};
+}
+
+// Active channel — receives list updates
+function connectActive() {
+  const url = `ws://${location.host}/dashboard/ws/active`;
+  const ws = new WebSocket(url);
+  ws.onopen = () => { connEl.className = 'conn ok'; connEl.textContent = 'connected'; };
+  ws.onclose = () => {
+    connEl.className = 'conn bad'; connEl.textContent = 'disconnected';
+    setTimeout(connectActive, 1000);
+  };
+  ws.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'snapshot') {
+      requests.clear();
+      for (const r of ev.active) requests.set(r.req_id, r);
+      for (const r of ev.history) requests.set(r.req_id, r);
+    } else if (ev.type === 'start' || ev.type === 'update' || ev.type === 'finish') {
+      requests.set(ev.req.req_id, ev.req);
+      if (ev.req.req_id === selectedId) updateStats(ev.req);
+    }
+    renderList();
+  };
+}
+
+connectActive();
+</script>
+</body>
+</html>
