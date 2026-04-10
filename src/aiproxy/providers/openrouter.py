@@ -36,3 +36,8 @@ class OpenRouterProvider(Provider):
             resp_body=resp_body,
             chunks=chunks,
         )
+
+    def extract_chunk_text(self, chunk_data: bytes) -> tuple[str, list[dict]]:
+        # OpenRouter uses the same chat-completions SSE format as OpenAI.
+        from aiproxy.providers.openai import OpenAIProvider
+        return OpenAIProvider.extract_chunk_text(self, chunk_data)  # type: ignore[arg-type]

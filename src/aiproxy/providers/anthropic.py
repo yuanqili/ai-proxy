@@ -72,6 +72,20 @@ class AnthropicProvider(Provider):
             cached_tokens=cached,
         )
 
+    def extract_chunk_text(self, chunk_data: bytes) -> tuple[str, list[dict]]:
+        if not chunk_data:
+            return ("", [])
+        events = iter_sse_data_events([chunk_data])
+        text_parts: list[str] = []
+        for ev in events:
+            if ev.get("type") == "content_block_delta":
+                delta = ev.get("delta")
+                if isinstance(delta, dict) and delta.get("type") == "text_delta":
+                    t = delta.get("text")
+                    if isinstance(t, str):
+                        text_parts.append(t)
+        return ("".join(text_parts), events)
+
     @staticmethod
     def _usage_from_dict(usage: dict | None) -> Usage | None:
         if not isinstance(usage, dict):

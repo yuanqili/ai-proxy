@@ -94,3 +94,12 @@ class Provider(ABC):
         Default returns None (no parsing).
         """
         return None
+
+    def extract_chunk_text(self, chunk_data: bytes) -> tuple[str, list[dict]]:
+        """Parse one raw upstream chunk into (rendered_text_delta, list_of_parsed_events).
+
+        A single raw chunk may contain multiple SSE data events (or none).
+        Complete events are parsed; malformed or incomplete ones are skipped.
+        Default returns ("", []). Provider subclasses override this.
+        """
+        return ("", [])

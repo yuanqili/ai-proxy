@@ -72,3 +72,20 @@ class OpenAIProvider(Provider):
             if isinstance(event, dict) and "usage" in event:
                 return _parse_openai_usage(event)
         return None
+
+    def extract_chunk_text(self, chunk_data: bytes) -> tuple[str, list[dict]]:
+        if not chunk_data:
+            return ("", [])
+        events = iter_sse_data_events([chunk_data])
+        text_parts: list[str] = []
+        for ev in events:
+            choices = ev.get("choices")
+            if not isinstance(choices, list):
+                continue
+            for ch in choices:
+                delta = ch.get("delta") if isinstance(ch, dict) else None
+                if isinstance(delta, dict):
+                    content = delta.get("content")
+                    if isinstance(content, str):
+                        text_parts.append(content)
+        return ("".join(text_parts), events)
