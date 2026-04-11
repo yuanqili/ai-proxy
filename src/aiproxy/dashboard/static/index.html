@@ -390,14 +390,18 @@ a:hover { text-decoration: underline; }
 .preview-content {
   font-size: 13px;
   line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-word;
   color: var(--text);
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-.preview-part { margin: 0; }
+/* Default: normal whitespace handling so JS template literals' indentation
+   doesn't bleed into the rendered output as visible blank lines between
+   block-level children. Text-bearing parts opt back in to pre-wrap so their
+   own content preserves any `\n` the model actually emitted. */
+.preview-part { margin: 0; white-space: normal; word-break: break-word; }
+.preview-part.text,
+.preview-part.thinking { white-space: pre-wrap; }
 .preview-part.image img {
   max-width: 320px;
   max-height: 220px;
@@ -1656,7 +1660,7 @@ function buildResponsePreviewFromBody(req) {
 
 function renderPreviewPartHtml(p) {
   if (p.kind === "text") {
-    return `<div class="preview-part">${escHtml(p.text)}</div>`;
+    return `<div class="preview-part text">${escHtml(p.text)}</div>`;
   }
   if (p.kind === "image") {
     if (p.url) {
@@ -1871,7 +1875,7 @@ function renderStreamingBlocksHtml(blocks) {
   if (!blocks.length) return "";
   const partsHtml = blocks.map(b => {
     if (b.kind === "text" || b.kind === "thinking") {
-      const cls = b.kind === "thinking" ? "preview-part thinking" : "preview-part";
+      const cls = b.kind === "thinking" ? "preview-part thinking" : "preview-part text";
       const prefix = b.kind === "thinking"
         ? '<div class="preview-tool-hdr">💭 thinking</div>' : "";
       return `<div class="${cls}">${prefix}${escHtml(b.text || "")}</div>`;
