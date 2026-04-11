@@ -367,11 +367,11 @@ a:hover { text-decoration: underline; }
 /* Preview (Request/Response) */
 .preview-empty { color: var(--muted); font-size: 12px; font-style: italic; padding: 8px 0; }
 .preview-loading { color: var(--muted); font-size: 12px; padding: 8px 0; }
-.preview-chat { display: flex; flex-direction: column; gap: 8px; }
+.preview-chat { display: flex; flex-direction: column; gap: 6px; }
 .preview-msg {
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 6px 10px;
   background: rgba(255,255,255,0.02);
 }
 .preview-msg-system { border-left: 3px solid var(--muted); }
@@ -382,20 +382,22 @@ a:hover { text-decoration: underline; }
   font-size: 10px;
   text-transform: uppercase;
   color: var(--muted);
-  margin-bottom: 5px;
+  margin-bottom: 4px;
   font-weight: 600;
   font-family: var(--mono);
   letter-spacing: 0.04em;
 }
 .preview-content {
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
-.preview-part { margin-bottom: 6px; }
-.preview-part:last-child { margin-bottom: 0; }
+.preview-part { margin: 0; }
 .preview-part.image img {
   max-width: 320px;
   max-height: 220px;
@@ -413,7 +415,7 @@ a:hover { text-decoration: underline; }
   background: rgba(163,113,247,0.08);
   border: 1px solid rgba(163,113,247,0.35);
   border-radius: 4px;
-  padding: 6px 8px;
+  padding: 4px 6px;
 }
 .preview-part.tool-result {
   background: rgba(16,185,129,0.08);
@@ -425,32 +427,39 @@ a:hover { text-decoration: underline; }
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
+  line-height: 1.2;
 }
 .preview-tool-hdr b { color: var(--text); text-transform: none; }
 .preview-tool-id {
   font-family: var(--mono);
   font-size: 10px;
   color: var(--muted);
-  margin-bottom: 4px;
+  margin-bottom: 3px;
+  line-height: 1.2;
 }
 .preview-tool-body {
   margin: 0;
   font-family: var(--mono);
   font-size: 11.5px;
+  line-height: 1.35;
   color: var(--text);
   white-space: pre-wrap;
   word-break: break-word;
   background: #0a0d12;
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 8px;
+  padding: 6px 8px;
   max-height: 360px;
   overflow-y: auto;
 }
-/* When the body is also .code-block (highlighted JSON), tighten the max-height
-   override since .code-block's default is viewport-height based. */
-.preview-tool-body.code-block { max-height: 360px; }
+/* When the body is also .code-block (highlighted JSON), override the
+   generic .code-block padding + max-height with our tighter settings. */
+.preview-tool-body.code-block {
+  padding: 6px 8px;
+  line-height: 1.35;
+  max-height: 360px;
+}
 .preview-tool-err {
   display: inline-block;
   background: rgba(248,81,73,.2);
@@ -460,20 +469,6 @@ a:hover { text-decoration: underline; }
   border-radius: 8px;
   text-transform: uppercase;
   font-weight: 600;
-}
-.preview-streaming-text {
-  background: #0a0d12;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 12px;
-  font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--text);
-  max-height: calc(100vh - 280px);
-  overflow-y: auto;
 }
 
 /* ── Replay panel ──────────────────────────────────────────────────── */
@@ -1718,10 +1713,6 @@ function renderPreviewChatHtml(messages) {
   }).join("") + `</div>`;
 }
 
-function renderPreviewTextHtml(text) {
-  return `<div class="preview-streaming-text">${escHtml(text)}</div>`;
-}
-
 const PREVIEW_FALLBACK_REQ =
   `<div class="preview-empty">Preview is not available for this request. Refer to the body for more details.</div>`;
 const PREVIEW_FALLBACK_RESP =
@@ -1949,14 +1940,9 @@ async function renderBodyPanel(side, req) {
   }
 
   const preview = buildResponsePreviewFromBody(req);
-  let previewHtml;
-  if (preview.ok && preview.text) {
-    previewHtml = renderPreviewTextHtml(preview.text);
-  } else if (preview.ok && preview.parts) {
-    previewHtml = renderPreviewChatHtml([{role: "assistant", parts: preview.parts}]);
-  } else {
-    previewHtml = PREVIEW_FALLBACK_RESP;
-  }
+  const previewHtml = (preview.ok && preview.parts)
+    ? renderPreviewChatHtml([{role: "assistant", parts: preview.parts}])
+    : PREVIEW_FALLBACK_RESP;
   el.innerHTML = buildCollapsibleSections({
     previewHtml, headers, query, bodyB64, previewOpen: preview.ok,
   });
