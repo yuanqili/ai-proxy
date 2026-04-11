@@ -37,6 +37,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 if TYPE_CHECKING:
@@ -470,6 +471,55 @@ def create_dashboard_router(
             )
             await s.commit()
         return JSONResponse({"pricing": _serialize_pricing(row)})
+
+    @router.get("/api/pricing/catalog/preview")
+    async def api_pricing_catalog_preview(
+        _: dict = Depends(require_session),
+    ) -> JSONResponse:
+        """Fetch the LiteLLM pricing catalog and return a diff preview against
+        the currently-effective rows, without writing anything."""
+        from aiproxy.pricing import catalog as catalog_mod
+        try:
+            entries = await catalog_mod.fetch_catalog()
+        except httpx.HTTPError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to fetch LiteLLM catalog: {e}",
+            )
+        async with sessionmaker() as s:
+            diff = await catalog_mod.diff_against_db(s, entries)
+        return JSONResponse({
+            "source": catalog_mod.LITELLM_CATALOG_URL,
+            "entries_total": len(entries),
+            **diff,
+        })
+
+    @router.post("/api/pricing/catalog/apply")
+    async def api_pricing_catalog_apply(
+        _: dict = Depends(require_session),
+    ) -> JSONResponse:
+        """Fetch the LiteLLM catalog again and write add/supersede rows.
+
+        Re-fetching (rather than trusting the preview payload) avoids the
+        client round-tripping a large JSON back to us and keeps the decision
+        authoritative on the server. Unchanged rows are skipped inside
+        apply_catalog.
+        """
+        from aiproxy.pricing import catalog as catalog_mod
+        try:
+            entries = await catalog_mod.fetch_catalog()
+        except httpx.HTTPError as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Failed to fetch LiteLLM catalog: {e}",
+            )
+        async with sessionmaker() as s:
+            summary = await catalog_mod.apply_catalog(s, entries)
+            await s.commit()
+        return JSONResponse({
+            "source": catalog_mod.LITELLM_CATALOG_URL,
+            **summary,
+        })
 
     # ---- protected: config ----
 

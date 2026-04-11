@@ -742,6 +742,34 @@ a:hover { text-decoration: underline; }
   vertical-align: middle;
 }
 .data-table tr:hover td { background: rgba(255,255,255,.02); }
+
+/* LiteLLM catalog refresh modal diff table */
+.cr-section-hdr {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  margin: 12px 0 4px 0;
+  font-weight: 600;
+}
+.cr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.cr-table th {
+  text-align: left;
+  padding: 4px 6px;
+  color: var(--muted);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+.cr-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(255,255,255,.03);
+}
+.cr-table b { color: var(--text); }
 .key-value {
   font-family: var(--mono);
   font-size: 11px;
@@ -958,7 +986,10 @@ a:hover { text-decoration: underline; }
   <div id="pricing-page">
     <div class="page-header">
       <h2>Pricing</h2>
-      <button class="btn-primary" id="add-pricing-btn">+ Add pricing</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-secondary" id="catalog-refresh-btn" title="Fetch latest pricing from the LiteLLM catalog">↻ Refresh from LiteLLM catalog</button>
+        <button class="btn-primary" id="add-pricing-btn">+ Add pricing</button>
+      </div>
     </div>
     <table class="data-table" id="pricing-table">
       <thead><tr>
@@ -1041,6 +1072,23 @@ a:hover { text-decoration: underline; }
     <div class="modal-actions">
       <button class="btn-secondary" id="ck-cancel">Cancel</button>
       <button class="btn-primary" id="ck-submit">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Modal: LiteLLM catalog refresh preview ─────────────────────────── -->
+<div class="modal-backdrop" id="modal-catalog-refresh">
+  <div class="modal-card" style="max-width:720px;max-height:80vh;display:flex;flex-direction:column;">
+    <h3>Refresh pricing from LiteLLM catalog</h3>
+    <p style="font-size:11px;color:var(--muted);margin:4px 0 10px 0;">
+      Source: <span id="cr-source" class="mono"></span>
+    </p>
+    <div id="cr-loading" style="color:var(--muted);font-size:12px;padding:16px 0;">Fetching catalog…</div>
+    <div id="cr-summary" style="display:none;flex:1;min-height:0;overflow-y:auto;"></div>
+    <div class="modal-err" id="cr-err"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="cr-cancel">Close</button>
+      <button class="btn-primary" id="cr-apply" disabled>Apply</button>
     </div>
   </div>
 </div>
@@ -2705,6 +2753,116 @@ document.getElementById("ap-submit").addEventListener("click", async () => {
   }
   hideModal("modal-add-pricing");
   loadPricing();
+});
+
+/* LiteLLM catalog refresh modal */
+function fmtMoney(v) {
+  if (v == null) return "—";
+  // Up to 4 significant digits, avoiding scientific notation.
+  const fixed = Number(v).toFixed(4);
+  return "$" + parseFloat(fixed).toString();
+}
+
+function renderCatalogSummary(data) {
+  const el = document.getElementById("cr-summary");
+  const adds = data.would_add || [];
+  const sups = data.would_supersede || [];
+  const headline = `
+    <div style="display:flex;gap:16px;margin-bottom:10px;font-size:12px;">
+      <span><b style="color:#10b981">${adds.length}</b> to add</span>
+      <span><b style="color:#d29922">${sups.length}</b> to supersede</span>
+      <span style="color:var(--muted)">${data.unchanged || 0} unchanged</span>
+    </div>`;
+  let html = headline;
+  if (!adds.length && !sups.length) {
+    html += `<div style="color:var(--muted);font-size:12px;padding:12px 0">Your pricing table is already in sync with the catalog.</div>`;
+  }
+  if (adds.length) {
+    html += `<div class="cr-section-hdr">New rows</div>
+      <table class="cr-table"><thead><tr>
+        <th>Provider</th><th>Model</th><th>Input/1M</th><th>Output/1M</th><th>Cached/1M</th>
+      </tr></thead><tbody>` +
+      adds.map(e => `<tr>
+        <td>${escHtml(e.provider)}</td>
+        <td>${escHtml(e.model)}</td>
+        <td>${fmtMoney(e.input_per_1m_usd)}</td>
+        <td>${fmtMoney(e.output_per_1m_usd)}</td>
+        <td>${fmtMoney(e.cached_per_1m_usd)}</td>
+      </tr>`).join("") + `</tbody></table>`;
+  }
+  if (sups.length) {
+    html += `<div class="cr-section-hdr">Superseded rows</div>
+      <table class="cr-table"><thead><tr>
+        <th>Provider</th><th>Model</th><th>Input (old → new)</th><th>Output (old → new)</th><th>Cached (old → new)</th>
+      </tr></thead><tbody>` +
+      sups.map(c => `<tr>
+        <td>${escHtml(c.provider)}</td>
+        <td>${escHtml(c.model)}</td>
+        <td>${fmtMoney(c.old.input_per_1m_usd)} → <b>${fmtMoney(c.new.input_per_1m_usd)}</b></td>
+        <td>${fmtMoney(c.old.output_per_1m_usd)} → <b>${fmtMoney(c.new.output_per_1m_usd)}</b></td>
+        <td>${fmtMoney(c.old.cached_per_1m_usd)} → <b>${fmtMoney(c.new.cached_per_1m_usd)}</b></td>
+      </tr>`).join("") + `</tbody></table>`;
+  }
+  el.innerHTML = html;
+  el.style.display = "block";
+  document.getElementById("cr-apply").disabled = !(adds.length || sups.length);
+}
+
+async function openCatalogModal() {
+  document.getElementById("cr-err").textContent = "";
+  document.getElementById("cr-source").textContent = "";
+  document.getElementById("cr-summary").style.display = "none";
+  document.getElementById("cr-summary").innerHTML = "";
+  document.getElementById("cr-loading").style.display = "block";
+  document.getElementById("cr-apply").disabled = true;
+  showModal("modal-catalog-refresh");
+  const r = await apiFetch("/dashboard/api/pricing/catalog/preview");
+  if (!r) return;
+  if (!r.ok) {
+    document.getElementById("cr-loading").style.display = "none";
+    const d = await r.json().catch(() => ({}));
+    document.getElementById("cr-err").textContent = d.detail || ("Error " + r.status);
+    return;
+  }
+  const data = await r.json();
+  document.getElementById("cr-loading").style.display = "none";
+  document.getElementById("cr-source").textContent = data.source || "";
+  renderCatalogSummary(data);
+}
+
+document.getElementById("catalog-refresh-btn").addEventListener("click", openCatalogModal);
+document.getElementById("cr-cancel").addEventListener("click", () => hideModal("modal-catalog-refresh"));
+document.getElementById("modal-catalog-refresh").addEventListener("click", e => {
+  if (e.target === e.currentTarget) hideModal("modal-catalog-refresh");
+});
+document.getElementById("cr-apply").addEventListener("click", async () => {
+  const btn = document.getElementById("cr-apply");
+  const errEl = document.getElementById("cr-err");
+  errEl.textContent = "";
+  btn.disabled = true;
+  btn.textContent = "Applying…";
+  try {
+    const r = await apiFetch("/dashboard/api/pricing/catalog/apply", {method: "POST"});
+    if (!r || !r.ok) {
+      const d = r ? await r.json().catch(() => ({})) : {};
+      errEl.textContent = d.detail || ("Error " + (r && r.status));
+      btn.disabled = false;
+      btn.textContent = "Apply";
+      return;
+    }
+    const summary = await r.json();
+    hideModal("modal-catalog-refresh");
+    loadPricing();
+    // Brief inline confirmation on the Pricing page header.
+    const header = document.querySelector("#pricing-page .page-header h2");
+    if (header) {
+      const orig = header.textContent;
+      header.textContent = `Pricing — +${summary.added} added, ${summary.superseded} superseded`;
+      setTimeout(() => { header.textContent = orig; }, 4000);
+    }
+  } finally {
+    btn.textContent = "Apply";
+  }
 });
 
 /* ════════════════════════════════════════════════════════════════════

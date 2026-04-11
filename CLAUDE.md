@@ -68,6 +68,7 @@ Unlike LiteLLM / Helicone / Langfuse / Phoenix, which log requests after complet
 - **Auto-injection of `stream_options.include_usage=true`.** OpenAI's streaming responses only return token usage when the client sets `stream_options.include_usage=true`. To make streaming requests billable by default, `Provider.rewrite_request_body(body, is_streaming)` is called in `PassthroughEngine.forward` *before* persist + forward. The OpenAI + OpenRouter implementations inject the flag only if the client omitted it entirely — explicit client intent (`true` or `false`) is respected unchanged. The rewritten bytes are what we persist *and* forward, so dashboard replay reflects the real upstream request. Anthropic doesn't need this (it always returns `usage` in `message_start` / `message_delta`).
 - **`X-AIProxy-*` private header namespace.** Clients can attach classification metadata to any proxied request with `X-AIProxy-Labels: prod,v1,regression` (normalized: trimmed, deduped, order preserved) and `X-AIProxy-Note: free-form text`. The proxy reads these into the `requests.labels` / `requests.note` columns and then strips them via `clean_upstream_headers` so the upstream never sees them. Labels are filterable via `/api/requests?label=prod&label=v1` (intersection semantics — row must contain *all* passed labels). Stored as a comma-joined string; matched via the 4-pattern LIKE trick with wildcard escaping. Adding a new header under this namespace only requires a new branch in `PassthroughEngine.forward`; the stripping rule already covers the whole prefix.
 - **Additive column migrations via `db/migrate.py`.** We don't use Alembic. For additive schema changes (new nullable columns), `ensure_requests_columns` runs `PRAGMA table_info` + `ALTER TABLE ADD COLUMN` on startup — idempotent, safe to call every boot. Anything needing a table rewrite (drop column, change type, add NOT NULL without default) should NOT go through this helper.
+- **LiteLLM pricing catalog refresh** (`pricing/catalog.py`). Rather than manually curate `pricing_seed.json` when a new model lands, the Pricing tab has a "Refresh from LiteLLM catalog" button that pulls `model_prices_and_context_window.json` from the upstream BerriAI/litellm repo, normalizes the 2600+ entries down to our three providers (OpenAI / Anthropic / OpenRouter chat models only — Azure, Bedrock, fine-tunes, embeddings, image gen all filtered out), and diff-previews the changes (would_add / would_supersede / unchanged) before writing. OpenRouter entries have the `openrouter/` key prefix stripped so the model matches what clients send in `body.model`. Apply uses the existing `upsert_current`, which closes the prior effective row and inserts a new one — full versioned history is preserved.
 
 ## Project layout
 
@@ -198,6 +199,8 @@ Adding a new provider: subclass `Provider`, implement the above, register it in 
 ### Writes
 - `POST /dashboard/api/keys` / `PATCH /dashboard/api/keys/{id}`
 - `POST /dashboard/api/pricing`
+- `GET /dashboard/api/pricing/catalog/preview` — fetches LiteLLM's model catalog and returns a diff vs. the currently-effective pricing rows (no writes)
+- `POST /dashboard/api/pricing/catalog/apply` — re-fetches and applies the additions + supersessions
 - `POST /dashboard/api/config`
 - `POST /dashboard/api/batch/strip-binaries` — replace base64 blobs with placeholders
 - `POST /dashboard/api/batch/vacuum` — SQLite `VACUUM`, returns before/after sizes
@@ -225,7 +228,7 @@ Single vanilla-JS SPA. Top-level tabs: **Requests · Timeline · Keys · Pricing
 | 4 | Replay Player: `/replay` endpoint, Player + JSON Log modes, live-follow, stateful SSE parser | ✅ |
 | 5 | Polish: Timeline tab, JSON export, Vacuum + DB stats, Overview error banner | ✅ |
 
-All phases merged to `main`. 184 tests passing, overall coverage ≈ 90%.
+All phases merged to `main`. 207 tests passing, overall coverage ≈ 90%.
 
 **Explicitly deferred** from Phase 5: the spec's optional "retry this request" button. Retry would introduce a second class of request (replayed vs. original) with unclear semantics around headers, auth rewriting, and timeline annotation. Revisit in a future phase if needed.
 
@@ -284,7 +287,7 @@ To see live replay: while a stream is in flight, open the Requests tab, click th
 ## Tests
 
 ```bash
-uv run pytest -q                                      # 184 tests, ~2.0 s
+uv run pytest -q                                      # 207 tests, ~2.1 s
 uv run pytest --cov=src/aiproxy --cov-report=term     # coverage report
 uv run pytest tests/unit/ -v                          # unit only
 uv run pytest tests/integration/ -v                   # integration only
