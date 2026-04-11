@@ -1,81 +1,135 @@
-# ai-proxy (MVP)
+# ai-proxy
 
-AI API proxy with a **live-streaming observability dashboard**. Unlike existing
-tools (LiteLLM, Helicone, Langfuse, Phoenix, etc.) that log requests *after*
-completion, this proxy tees upstream streaming chunks to a dashboard in real
-time, so you can watch tokens appear as the model generates them.
+A self-hosted **AI API proxy with a live-streaming observability dashboard**. Sits between your client and OpenAI / Anthropic / OpenRouter, persists every request, and tees streaming chunks to a dashboard in real time so you can watch tokens land as they're generated — or replay any past streaming request byte-exact at 0.5×/1×/2×/4×/∞ speed.
 
-## Architecture
+Unlike LiteLLM / Helicone / Langfuse / Phoenix (which log requests after completion), ai-proxy publishes chunks to the dashboard **while the model is still generating**.
 
-```
-[Downstream Client] <--> [ai-proxy] <--> [Upstream: OpenRouter]
-                            |
-                            └── tee ──> [StreamBus] --> [Dashboard WebSocket]
-```
+## Features
 
-- **Passthrough proxy** — no format translation, forwards request bodies as-is
-- **Tee** — each upstream chunk goes to both the downstream client and the bus
-- **In-memory pub/sub bus** — bounded queues, slow subscribers get dropped
-  events (dashboard is observer, proxy hot path is never blocked)
-- **Request registry** — tracks active + recent requests with lifecycle events
+- **Passthrough proxy** — exact byte-for-byte forwarding, client talks to the upstream format unchanged
+- **Multi-provider** — OpenAI, Anthropic, OpenRouter (add more via a small ABC)
+- **Live streaming dashboard** — WebSocket tee, watch tokens appear live
+- **Replay Player** — scrubber with per-chunk ticks, variable speed, live-follow, dim/typewriter modes
+- **Timeline view** — SVG lane chart grouped by model / provider / API key
+- **Full-text search** — SQLite FTS5 over request and response bodies
+- **Per-client API keys** — issue, revoke, toggle active, track usage
+- **Versioned pricing** — per-model input/output/cached token pricing with effective dates, cost snapshot on every request
+- **Single-file vanilla JS UI** — no framework, no build step
+- **SQLite storage** — one file, zero ops, FTS5 built in
 
-## Layout
+## Tech stack
 
-```
-src/aiproxy/
-├── app.py                  FastAPI factory + httpx client lifespan
-├── __main__.py             Entry point: python -m aiproxy
-├── settings.py             Pydantic settings from .env
-├── bus.py                  StreamBus + RequestRegistry
-├── core/
-│   └── headers.py          Hop-by-hop header stripping
-├── proxy/
-│   └── openrouter.py       Passthrough proxy w/ streaming tee
-└── dashboard/
-    ├── routes.py           WS endpoints + static
-    └── static/index.html   Vanilla JS dashboard
-scripts/
-└── test_stream.py          Manual client test
-```
+Python 3.11+ · FastAPI · httpx · SQLAlchemy 2.x async · aiosqlite · PyJWT · uv · vanilla JS + inline SVG
 
-## Run
+## Quick start
 
 ```bash
-cp .env.example .env   # put your OPENROUTER_KEY in .env
+cp .env.example .env                          # fill in upstream API keys + master key
 uv sync
-uv run python -m aiproxy
+uv run python -m aiproxy                      # listens on 127.0.0.1:8000
+uv run python scripts/create_api_key.py --name "my-cli"   # first-run only
 ```
 
-Then visit **http://127.0.0.1:8000/dashboard/** and in another terminal:
+Open http://127.0.0.1:8000/dashboard/ and log in with `PROXY_MASTER_KEY`.
+
+Then, from another terminal, exercise a streaming request:
 
 ```bash
-uv run python scripts/test_stream.py --model openai/gpt-4o-mini
+curl -N -H "Authorization: Bearer $CLIENT_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"Write a haiku"}],"stream":true}' \
+  http://127.0.0.1:8000/openai/chat/completions
 ```
 
-Tokens appear live in the dashboard as they're generated.
+The request appears live in the Requests tab. Click it → **Replay** detail tab → it joins live-follow mode and renders tokens as they land.
+
+Or run the bundled provider smoke test:
+
+```bash
+uv run python scripts/test_all.py             # hits all 3 providers, prints TTFT + cost
+```
 
 ## Endpoints
 
+### Proxy
 | Path | Purpose |
 |------|---------|
+| `POST /openai/{path}` | Passthrough to `api.openai.com/{path}` |
+| `POST /anthropic/{path}` | Passthrough to `api.anthropic.com/{path}` |
 | `POST /openrouter/{path}` | Passthrough to `openrouter.ai/api/v1/{path}` |
-| `GET /dashboard/` | Static HTML dashboard |
-| `GET /dashboard/api/active` | Snapshot of active + recent requests |
-| `WS /dashboard/ws/active` | Live lifecycle events (start/update/finish) |
-| `WS /dashboard/ws/stream/{req_id}` | Live chunks for one request |
-| `GET /healthz` | Liveness probe |
+| `GET /healthz` | Liveness |
 
-## Verified
+### Dashboard (auth-gated)
+| Path | Purpose |
+|------|---------|
+| `GET /dashboard/` | Vanilla JS SPA |
+| `GET /dashboard/api/active` | Active + recent requests snapshot |
+| `GET /dashboard/api/requests` | Paginated list + filters + FTS search |
+| `GET /dashboard/api/requests/export` | Export current filter as JSON |
+| `GET /dashboard/api/requests/{id}` | Full detail + chunks |
+| `GET /dashboard/api/requests/{id}/replay` | Parsed chunks for the Replay Player |
+| `GET /dashboard/api/timeline` | Lane-grouped request window |
+| `GET /dashboard/api/stats/db` | DB size + row counts |
+| `POST /dashboard/api/batch/vacuum` | SQLite VACUUM |
+| `POST /dashboard/api/batch/strip-binaries` | Replace base64 blobs with placeholders |
+| `WS  /dashboard/ws/active` | Live lifecycle events |
+| `WS  /dashboard/ws/stream/{id}` | Per-chunk events for one request |
 
-- Streaming 32 chunks over 0.57s visible in dashboard in real time
-- First chunk visible in dashboard +2.5s from request start
-- Non-streaming requests (e.g. `GET /models`) also tracked in registry
-- Error status codes (404, 429) captured correctly
+Plus CRUD for keys, pricing, and runtime config.
 
-## Next steps
+## Dashboard tabs
 
-- [ ] Add Anthropic, OpenAI, Gemini providers (same pattern)
-- [ ] Persist request history to PostgreSQL (with optional chunk log)
-- [ ] API key management + per-key rate limiting
-- [ ] Format-aware rendering (Anthropic SSE event types, Gemini etc.)
-- [ ] WebSocket passthrough for Realtime API
+- **Requests** — two-pane list + detail (Overview, Request, Response, Chunks, Replay)
+- **Timeline** — SVG lane chart grouped by model / provider / API key; 3 s live polling
+- **Keys** — issue, revoke, rename, toggle active
+- **Pricing** — versioned pricing rows, adding a new row auto-closes the current effective row
+- **Settings** — retention threshold, batch strip binaries, DB size / counts / Vacuum
+
+## Project layout
+
+```
+src/aiproxy/
+├── app.py              FastAPI factory + production lifespan
+├── bus.py              StreamBus (in-memory pub/sub)
+├── registry.py         RequestRegistry (active + recent)
+├── auth/               Proxy-client auth + dashboard session auth
+├── core/               Hop-by-hop headers, PassthroughEngine
+├── providers/          Provider ABC + OpenAI / Anthropic / OpenRouter
+├── routers/proxy.py    /{provider}/{path:path} dispatcher
+├── db/                 SQLAlchemy 2.x async models, CRUD, FTS5, retention loop
+├── pricing/            Versioned pricing compute + seed
+└── dashboard/          Dashboard router + single-file vanilla JS SPA
+tests/unit              Pure unit tests
+tests/integration       FastAPI TestClient + in-memory SQLite
+scripts/                Manual real-upstream smoke scripts
+docs/superpowers/       Design spec + per-phase implementation plans
+```
+
+## Status
+
+All five planned phases are complete and merged to `main`:
+
+| Phase | Scope | Status |
+|---|---|---|
+| 1 | Passthrough foundation + provider ABC + StreamBus + client-key auth | ✅ |
+| 2 | SQLite persistence, chunk storage, pricing, FTS, WebSockets, retention | ✅ |
+| 3 | Rich dashboard UX — keys / pricing / config UIs, filters + search, batch ops | ✅ |
+| 4 | Replay Player (media mode + JSON log) + live-follow + stateful SSE parser | ✅ |
+| 5 | Timeline tab, JSON export, Vacuum + DB stats, Overview error banner | ✅ |
+
+**161 tests passing · ~90% coverage · fully in-process test suite (no real upstream required).**
+
+See `CLAUDE.md` for the full design doc, architectural decisions, and conventions, and `docs/superpowers/specs/` + `docs/superpowers/plans/` for the per-phase plans.
+
+## Tests
+
+```bash
+uv run pytest -q                                      # full suite
+uv run pytest --cov=src/aiproxy --cov-report=term     # with coverage
+uv run pytest tests/unit/ -v                          # unit only
+uv run pytest tests/integration/ -v                   # integration only
+```
+
+## License
+
+TBD.
