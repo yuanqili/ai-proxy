@@ -322,19 +322,85 @@ a:hover { text-decoration: underline; }
 .code-block .bool { color: #56d364; }
 .code-block .nil { color: var(--muted); }
 .code-section { margin-bottom: 14px; }
-.code-section-title { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
-
-/* Chunks */
-.chunk-row {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
+.code-section > summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
   padding: 6px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 11.5px;
+  user-select: none;
 }
-.chunk-meta { color: var(--muted); white-space: nowrap; font-family: var(--mono); font-size: 11px; min-width: 160px; }
-.chunk-preview { font-family: var(--mono); font-size: 11px; color: var(--text); word-break: break-all; }
+.code-section > summary::-webkit-details-marker { display: none; }
+.code-section > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 12px;
+  transition: transform 0.12s ease;
+}
+.code-section[open] > summary::before { transform: rotate(90deg); }
+.code-section > summary:hover { color: var(--text); }
+
+/* Preview (Request/Response) */
+.preview-empty { color: var(--muted); font-size: 12px; font-style: italic; padding: 8px 0; }
+.preview-loading { color: var(--muted); font-size: 12px; padding: 8px 0; }
+.preview-chat { display: flex; flex-direction: column; gap: 8px; }
+.preview-msg {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.02);
+}
+.preview-msg-system { border-left: 3px solid var(--muted); }
+.preview-msg-user { border-left: 3px solid var(--accent); }
+.preview-msg-assistant { border-left: 3px solid #10b981; }
+.preview-msg-tool { border-left: 3px solid #a371f7; }
+.preview-role {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 5px;
+  font-weight: 600;
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+}
+.preview-content {
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+.preview-part { margin-bottom: 6px; }
+.preview-part:last-child { margin-bottom: 0; }
+.preview-part.image img {
+  max-width: 320px;
+  max-height: 220px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+}
+.preview-part.image .preview-image-missing {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 12px;
+}
+.preview-part.unknown { color: var(--muted); font-style: italic; font-size: 12px; }
+.preview-streaming-text {
+  background: #0a0d12;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  max-height: calc(100vh - 280px);
+  overflow-y: auto;
+}
 
 /* ── Replay panel ──────────────────────────────────────────────────── */
 #dpanel-replay { display: none; flex-direction: column; padding: 0; }
@@ -489,23 +555,23 @@ a:hover { text-decoration: underline; }
 }
 .player-stats b { color: var(--text); font-weight: 500; }
 
-.view-toggle {
-  display: flex;
-  gap: 0;
-  margin-bottom: 10px;
-}
-.view-toggle .view-btn {
-  background: transparent;
-  border: 1px solid var(--border);
-  color: var(--muted);
-  padding: 3px 10px;
+/* Dim preview checkbox (player controls) */
+.dim-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   font-family: var(--mono);
+  color: var(--muted);
   cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
 }
-.view-toggle .view-btn:first-child { border-radius: 4px 0 0 4px; }
-.view-toggle .view-btn:last-child { border-radius: 0 4px 4px 0; border-left: none; }
-.view-toggle .view-btn.active { background: var(--accent); color: white; border-color: var(--accent); }
+.dim-checkbox input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent);
+}
+.dim-checkbox:hover { color: var(--text); }
 
 /* JSON Log mode */
 .jsonlog-header {
@@ -753,13 +819,11 @@ a:hover { text-decoration: underline; }
           <button class="detail-tab active" data-dtab="overview">Overview</button>
           <button class="detail-tab" data-dtab="request">Request</button>
           <button class="detail-tab" data-dtab="response">Response</button>
-          <button class="detail-tab" data-dtab="chunks">Chunks</button>
           <button class="detail-tab" data-dtab="replay" id="dtab-replay">Replay</button>
         </div>
         <div class="detail-panel active" id="dpanel-overview"></div>
         <div class="detail-panel" id="dpanel-request"></div>
         <div class="detail-panel" id="dpanel-response"></div>
-        <div class="detail-panel" id="dpanel-chunks"></div>
         <div class="detail-panel" id="dpanel-replay"></div>
       </div>
     </div>
@@ -1239,7 +1303,7 @@ async function selectRequest(reqId) {
   content.classList.add("visible");
 
   // Clear panels and show loading
-  ["overview","request","response","chunks","replay"].forEach(t =>
+  ["overview","request","response","replay"].forEach(t =>
     document.getElementById("dpanel-" + t).innerHTML = '<span style="color:var(--muted)">Loading…</span>');
 
   const r = await apiFetch("/dashboard/api/requests/" + encodeURIComponent(reqId));
@@ -1299,7 +1363,6 @@ function switchDetailTab(name) {
   if (name === "overview") renderOverview(req);
   else if (name === "request") renderBodyPanel("request", req);
   else if (name === "response") renderBodyPanel("response", req);
-  else if (name === "chunks") renderChunks(detailData.chunks || []);
   else if (name === "replay") renderReplay(req);
 }
 
@@ -1352,59 +1415,217 @@ function renderOverview(req) {
   </table>`;
 }
 
-function renderBodyPanel(side, req) {
+/* ── Preview helpers (Plan A: chat messages + text/image content parts) ── */
+
+function extractContentParts(content) {
+  if (content == null) return [];
+  if (typeof content === "string") {
+    return content ? [{kind: "text", text: content}] : [];
+  }
+  if (!Array.isArray(content)) return [{kind: "unknown"}];
+  return content.map(p => {
+    if (typeof p === "string") return {kind: "text", text: p};
+    if (!p || typeof p !== "object") return {kind: "unknown"};
+    // OpenAI chat: {type:"text", text} | {type:"image_url", image_url:{url}}
+    if (p.type === "text" && typeof p.text === "string") {
+      return {kind: "text", text: p.text};
+    }
+    if (p.type === "image_url") {
+      const url = p.image_url && p.image_url.url;
+      return {kind: "image", url: url || null};
+    }
+    // Anthropic messages: {type:"text", text} | {type:"image", source:{...}}
+    if (p.type === "image" && p.source) {
+      const src = p.source;
+      if (src.type === "base64" && src.data && src.media_type) {
+        return {kind: "image", url: `data:${src.media_type};base64,${src.data}`};
+      }
+      if (src.type === "url" && src.url) {
+        return {kind: "image", url: src.url};
+      }
+      return {kind: "image", url: null};
+    }
+    return {kind: "unknown"};
+  }).filter(p => p.kind !== "text" || p.text);
+}
+
+function buildRequestPreview(req) {
+  if (!req.req_body_b64) return {ok: false};
+  const obj = tryParseJSON(decodeB64(req.req_body_b64));
+  if (!obj || typeof obj !== "object") return {ok: false};
+  if (!Array.isArray(obj.messages)) return {ok: false};
+  const messages = [];
+  // Anthropic-style top-level system string.
+  if (typeof obj.system === "string" && obj.system.trim()) {
+    messages.push({role: "system", parts: [{kind: "text", text: obj.system}]});
+  }
+  for (const m of obj.messages) {
+    if (!m || typeof m !== "object") continue;
+    const role = typeof m.role === "string" ? m.role : "unknown";
+    const parts = extractContentParts(m.content);
+    if (parts.length) messages.push({role, parts});
+  }
+  if (!messages.length) return {ok: false};
+  return {ok: true, messages};
+}
+
+function buildResponsePreviewFromBody(req) {
+  if (!req.resp_body_b64) return {ok: false};
+  const obj = tryParseJSON(decodeB64(req.resp_body_b64));
+  if (!obj || typeof obj !== "object") return {ok: false};
+  // OpenAI chat-completions shape.
+  if (Array.isArray(obj.choices) && obj.choices.length > 0) {
+    const msg = obj.choices[0].message;
+    if (msg && typeof msg.content === "string" && msg.content) {
+      return {ok: true, text: msg.content};
+    }
+    if (msg && Array.isArray(msg.content)) {
+      const parts = extractContentParts(msg.content);
+      if (parts.length) return {ok: true, parts};
+    }
+  }
+  // Anthropic messages shape: top-level content[] of blocks.
+  if (Array.isArray(obj.content)) {
+    const texts = obj.content
+      .filter(b => b && b.type === "text" && typeof b.text === "string")
+      .map(b => b.text);
+    if (texts.length) return {ok: true, text: texts.join("\n\n")};
+  }
+  return {ok: false};
+}
+
+function renderPreviewChatHtml(messages) {
+  return `<div class="preview-chat">` + messages.map(m => {
+    const partsHtml = m.parts.map(p => {
+      if (p.kind === "text") {
+        return `<div class="preview-part">${escHtml(p.text)}</div>`;
+      }
+      if (p.kind === "image") {
+        if (p.url) {
+          return `<div class="preview-part image"><img src="${escHtml(p.url)}" alt="image"></div>`;
+        }
+        return `<div class="preview-part image"><span class="preview-image-missing">[image not available]</span></div>`;
+      }
+      return `<div class="preview-part unknown">[unsupported part]</div>`;
+    }).join("");
+    return `<div class="preview-msg preview-msg-${escHtml(m.role)}">
+      <div class="preview-role">${escHtml(m.role)}</div>
+      <div class="preview-content">${partsHtml}</div>
+    </div>`;
+  }).join("") + `</div>`;
+}
+
+function renderPreviewTextHtml(text) {
+  return `<div class="preview-streaming-text">${escHtml(text)}</div>`;
+}
+
+const PREVIEW_FALLBACK_REQ =
+  `<div class="preview-empty">Preview is not available for this request. Refer to the body for more details.</div>`;
+const PREVIEW_FALLBACK_RESP =
+  `<div class="preview-empty">Preview is not available for this response. Refer to the body for more details.</div>`;
+
+function buildCollapsibleSections({previewHtml, headers, query, bodyB64, previewOpen}) {
+  let html = "";
+  html += `<details class="code-section"${previewOpen ? " open" : ""}>
+    <summary>Preview</summary>
+    ${previewHtml}
+  </details>`;
+  if (headers) {
+    const obj = typeof headers === "string" ? tryParseJSON(headers) : headers;
+    html += `<details class="code-section">
+      <summary>Headers</summary>
+      <div class="code-block">${obj ? highlightJSON(obj) : escHtml(String(headers))}</div>
+    </details>`;
+  }
+  if (query) {
+    const obj = typeof query === "string" ? tryParseJSON(query) : query;
+    html += `<details class="code-section">
+      <summary>Query</summary>
+      <div class="code-block">${obj ? highlightJSON(obj) : escHtml(String(query))}</div>
+    </details>`;
+  }
+  if (bodyB64) {
+    const decoded = decodeB64(bodyB64);
+    const obj = tryParseJSON(decoded);
+    html += `<details class="code-section">
+      <summary>Body</summary>
+      <div class="code-block">${obj ? highlightJSON(obj) : escHtml(decoded)}</div>
+    </details>`;
+  } else {
+    html += `<div class="preview-empty">(no body)</div>`;
+  }
+  return html;
+}
+
+/* Reuse the Replay tab's cache — both tabs share replayData keyed by req_id. */
+async function ensureReplayDataFor(reqId) {
+  if (replayData && replayReqId === reqId) return replayData;
+  const r = await apiFetch("/dashboard/api/requests/" + encodeURIComponent(reqId) + "/replay");
+  if (!r || !r.ok) return null;
+  const data = await r.json();
+  replayData = data;
+  replayReqId = reqId;
+  return data;
+}
+
+function joinChunkText(chunks) {
+  if (!Array.isArray(chunks)) return "";
+  return chunks.map(c => c.text_delta || "").join("");
+}
+
+async function renderBodyPanel(side, req) {
   const el = document.getElementById("dpanel-" + side);
   const isReq = side === "request";
   const headers = isReq ? req.req_headers : req.resp_headers;
   const query   = isReq ? req.req_query   : null;
-  const b64     = isReq ? req.req_body_b64 : req.resp_body_b64;
+  const bodyB64 = isReq ? req.req_body_b64 : req.resp_body_b64;
 
-  let html = "";
-
-  if (headers) {
-    const obj = typeof headers === "string" ? tryParseJSON(headers) : headers;
-    html += `<div class="code-section">
-      <div class="code-section-title">Headers</div>
-      <div class="code-block">${obj ? highlightJSON(obj) : escHtml(String(headers))}</div>
-    </div>`;
-  }
-
-  if (query) {
-    const obj = typeof query === "string" ? tryParseJSON(query) : query;
-    html += `<div class="code-section">
-      <div class="code-section-title">Query</div>
-      <div class="code-block">${obj ? highlightJSON(obj) : escHtml(String(query))}</div>
-    </div>`;
-  }
-
-  if (b64) {
-    const decoded = decodeB64(b64);
-    const obj = tryParseJSON(decoded);
-    html += `<div class="code-section">
-      <div class="code-section-title">Body</div>
-      <div class="code-block">${obj ? highlightJSON(obj) : escHtml(decoded)}</div>
-    </div>`;
-  } else {
-    html += `<div style="color:var(--muted);font-size:12px;padding:8px 0">(no body)</div>`;
-  }
-
-  el.innerHTML = html;
-}
-
-function renderChunks(chunks) {
-  const el = document.getElementById("dpanel-chunks");
-  if (!chunks.length) {
-    el.innerHTML = '<span style="color:var(--muted);font-size:12px">No chunks recorded.</span>';
+  // Request preview is synchronous.
+  if (isReq) {
+    const preview = buildRequestPreview(req);
+    const previewHtml = preview.ok
+      ? renderPreviewChatHtml(preview.messages)
+      : PREVIEW_FALLBACK_REQ;
+    el.innerHTML = buildCollapsibleSections({
+      previewHtml, headers, query, bodyB64, previewOpen: preview.ok,
+    });
     return;
   }
-  el.innerHTML = chunks.map(c => {
-    const preview = c.data_b64 ? decodeB64(c.data_b64).slice(0, 200) : "";
-    const offsetMs = c.offset_ns != null ? (c.offset_ns / 1e6).toFixed(1) + "ms" : "—";
-    return `<div class="chunk-row">
-      <div class="chunk-meta">#${c.seq} · +${offsetMs} · ${c.size}B</div>
-      <div class="chunk-preview">${escHtml(preview)}</div>
-    </div>`;
-  }).join("");
+
+  // Response preview:
+  //   streaming → fetch /replay (cached), concat text_delta
+  //   non-streaming → parse body JSON synchronously
+  if (req.is_streaming) {
+    // Paint a loading placeholder first so Headers/Body are already visible.
+    el.innerHTML = buildCollapsibleSections({
+      previewHtml: `<div class="preview-loading">Loading preview…</div>`,
+      headers, query, bodyB64, previewOpen: true,
+    });
+    const data = await ensureReplayDataFor(req.req_id);
+    // Guard against the user having switched away while we awaited.
+    if (selectedReqId !== req.req_id) return;
+    const text = data ? joinChunkText(data.chunks) : "";
+    const previewHtml = text
+      ? renderPreviewTextHtml(text)
+      : PREVIEW_FALLBACK_RESP;
+    el.innerHTML = buildCollapsibleSections({
+      previewHtml, headers, query, bodyB64, previewOpen: Boolean(text),
+    });
+    return;
+  }
+
+  const preview = buildResponsePreviewFromBody(req);
+  let previewHtml;
+  if (preview.ok && preview.text) {
+    previewHtml = renderPreviewTextHtml(preview.text);
+  } else if (preview.ok && preview.parts) {
+    previewHtml = renderPreviewChatHtml([{role: "assistant", parts: preview.parts}]);
+  } else {
+    previewHtml = PREVIEW_FALLBACK_RESP;
+  }
+  el.innerHTML = buildCollapsibleSections({
+    previewHtml, headers, query, bodyB64, previewOpen: preview.ok,
+  });
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -1462,11 +1683,13 @@ function renderReplayMode(req) {
 const player = {
   playing: false,
   speed: 1.0,            // 0.5 | 1 | 2 | 4 | Infinity
-  view: "dim",           // "dim" | "typewriter"
+  showDim: false,        // if true, show grayed-out upcoming text after the cursor
   currentNs: 0,          // current playback offset in ns
   rafId: null,
   lastTickMs: 0,
   liveFollow: false,     // true when attached to live WS
+  dragging: false,       // user is currently dragging the scrubber
+  resumePlayingAfterDrag: false,
 };
 
 function resetPlayer() {
@@ -1549,7 +1772,6 @@ function renderPlayer(req) {
   const isLive = req.status === "streaming" || req.status === "pending";
   if (isLive) {
     player.liveFollow = true;
-    player.view = "typewriter";
     openReplayWs(req.req_id);
   }
   const el = document.getElementById("replay-content");
@@ -1562,11 +1784,6 @@ function renderPlayer(req) {
 
   // Build the player chrome
   el.innerHTML = `
-    <div class="view-toggle">
-      <button class="view-btn ${player.view === "dim" ? "active" : ""}" data-view="dim" ${isLive ? "disabled" : ""}>Dim preview</button>
-      <button class="view-btn ${player.view === "typewriter" ? "active" : ""}" data-view="typewriter">Typewriter</button>
-    </div>
-
     <div class="player-screen" id="player-screen"></div>
 
     <div class="scrubber-wrap">
@@ -1587,6 +1804,10 @@ function renderPlayer(req) {
       <button class="player-btn" id="btn-stop" title="Stop">⏹</button>
       <button class="player-btn" id="btn-ttft" title="Jump to first content" ${firstContent == null ? "disabled" : ""}>⏪ TTFT</button>
       <div class="player-spacer"></div>
+      <label class="dim-checkbox" title="Show upcoming text dimmed after the cursor">
+        <input type="checkbox" id="chk-dim" ${player.showDim ? "checked" : ""}>
+        <span>Dim preview</span>
+      </label>
       <div class="speed-group">
         ${[0.5, 1, 2, 4, Infinity].map(s =>
           `<button class="speed-btn ${player.speed === s ? "active" : ""}" data-speed="${s}">${s === Infinity ? "∞" : s + "×"}</button>`
@@ -1599,7 +1820,7 @@ function renderPlayer(req) {
 
   // Paint scrubber ticks for every chunk with non-empty text_delta (or all chunks if none have text)
   const track = document.getElementById("scrubber-track");
-  const tickChunks = replayData.chunks.filter(c => c.text_delta) .length > 0
+  const tickChunks = replayData.chunks.filter(c => c.text_delta).length > 0
     ? replayData.chunks.filter(c => c.text_delta)
     : replayData.chunks;
   for (const c of tickChunks) {
@@ -1617,32 +1838,67 @@ function renderPlayer(req) {
   document.getElementById("btn-ttft").addEventListener("click", () => {
     if (firstContent != null) playerSeek(firstContent, false);
   });
+  document.getElementById("chk-dim").addEventListener("change", (e) => {
+    player.showDim = e.target.checked;
+    playerPaint();
+  });
   el.querySelectorAll(".speed-btn").forEach(b => b.addEventListener("click", () => {
     const v = b.dataset.speed;
     player.speed = v === "Infinity" ? Infinity : parseFloat(v);
     el.querySelectorAll(".speed-btn").forEach(x =>
       x.classList.toggle("active", x.dataset.speed === v));
   }));
-  el.querySelectorAll(".view-btn").forEach(b => b.addEventListener("click", () => {
-    player.view = b.dataset.view;
-    el.querySelectorAll(".view-btn").forEach(x =>
-      x.classList.toggle("active", x.dataset.view === player.view));
-    playerPaint();
-  }));
 
-  // Click-to-seek on the track
-  track.addEventListener("click", (e) => {
+  // Drag-to-seek on the track (pointer events cover mouse + touch).
+  const pctFromEvent = (e) => {
     const rect = track.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-    playerSeek(pct * total, false);
-    // If user seeks away from the right edge, detach live-follow
-    if (pct < 0.99) {
-      player.liveFollow = false;
-    } else if (req.status === "streaming" || req.status === "pending") {
-      // Snapped back to the edge — re-attach
-      player.liveFollow = true;
+    return Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  };
+  const applySeek = (pct, finalize) => {
+    playerSeek(pct * (replayData.total_duration_ns || 0), false);
+    if (finalize) {
+      if (pct < 0.99) {
+        player.liveFollow = false;
+      } else if (req.status === "streaming" || req.status === "pending") {
+        player.liveFollow = true;
+      }
     }
-  });
+  };
+  const onPointerMove = (e) => {
+    if (!player.dragging) return;
+    applySeek(pctFromEvent(e), false);
+  };
+  const onPointerUp = (e) => {
+    if (!player.dragging) return;
+    player.dragging = false;
+    applySeek(pctFromEvent(e), true);
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+    window.removeEventListener("pointercancel", onPointerUp);
+    if (player.resumePlayingAfterDrag) {
+      player.resumePlayingAfterDrag = false;
+      if (!player.playing) playerTogglePlay();
+    }
+  };
+  const onPointerDown = (e) => {
+    player.dragging = true;
+    player.resumePlayingAfterDrag = player.playing;
+    if (player.playing) {
+      // Pause during drag but don't flip the resume flag
+      player.playing = false;
+      document.getElementById("btn-playpause").textContent = "▶";
+      if (player.rafId) { cancelAnimationFrame(player.rafId); player.rafId = null; }
+    }
+    applySeek(pctFromEvent(e), false);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+    e.preventDefault();
+  };
+  // One listener on the track; clicks on the handle bubble up and reuse the
+  // same handler. pointerdown on the handle and pointerdown on empty track
+  // are treated identically — both start a drag at the cursor position.
+  track.addEventListener("pointerdown", onPointerDown);
 
   // Reset position and paint
   player.currentNs = 0;
@@ -1739,13 +1995,12 @@ function playerPaint() {
   // Paint screen
   const screen = document.getElementById("player-screen");
   if (screen) {
-    if (player.view === "dim") {
+    if (player.showDim) {
       screen.innerHTML =
         `<span class="played">${escHtml(playedText)}</span>` +
         `<span class="cursor">&nbsp;</span>` +
         `<span class="dim">${escHtml(upcomingText)}</span>`;
     } else {
-      // typewriter
       screen.innerHTML =
         `<span class="played">${escHtml(playedText)}</span>` +
         `<span class="cursor">&nbsp;</span>`;

@@ -79,7 +79,7 @@ Plus CRUD for keys, pricing, and runtime config.
 
 ## Dashboard tabs
 
-- **Requests** — two-pane list + detail (Overview, Request, Response, Chunks, Replay)
+- **Requests** — two-pane list + detail (Overview, Request, Response, Replay); Request/Response each show collapsible Preview / Headers / Body
 - **Timeline** — SVG lane chart grouped by model / provider / API key; 3 s live polling
 - **Keys** — issue, revoke, rename, toggle active
 - **Pricing** — versioned pricing rows, adding a new row auto-closes the current effective row

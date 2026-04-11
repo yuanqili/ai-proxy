@@ -208,7 +208,7 @@ Adding a new provider: subclass `Provider`, implement the above, register it in 
 
 Single vanilla-JS SPA. Top-level tabs: **Requests · Timeline · Keys · Pricing · Settings**.
 
-- **Requests** — two-pane list + detail. Detail sub-tabs: Overview · Request · Response · Chunks · Replay (last one hidden for non-streaming).
+- **Requests** — two-pane list + detail. Detail sub-tabs: Overview · Request · Response · Replay (last one hidden for non-streaming). Request + Response panels each show a collapsible Preview / Headers / Body trio — Preview renders chat messages with text + image content parts for OpenAI / Anthropic / OpenRouter chat bodies, and streaming response previews reuse the Replay tab's cached text.
 - **Replay Player** — two modes: media-player UI (scrubber with per-chunk ticks, 0.5×/1×/2×/4×/∞ speeds, dim/typewriter views, TTFT jump, live-follow) and JSON Log (filterable chunk table with expand, export, jump-to-player).
 - **Timeline** — SVG lane chart grouped by model/provider/api_key, 5/15/60/360-minute windows, 3 s live polling, hover tooltip, click-to-navigate.
 - **Settings** — Retention, Batch operations (strip binaries), Database (size/counts + Vacuum).
