@@ -409,6 +409,55 @@ a:hover { text-decoration: underline; }
   font-size: 12px;
 }
 .preview-part.unknown { color: var(--muted); font-style: italic; font-size: 12px; }
+.preview-part.tool-use, .preview-part.tool-result {
+  background: rgba(163,113,247,0.08);
+  border: 1px solid rgba(163,113,247,0.35);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.preview-part.tool-result {
+  background: rgba(16,185,129,0.08);
+  border-color: rgba(16,185,129,0.35);
+}
+.preview-tool-hdr {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 4px;
+}
+.preview-tool-hdr b { color: var(--text); text-transform: none; }
+.preview-tool-id {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.preview-tool-body {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: #0a0d12;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.preview-tool-err {
+  display: inline-block;
+  background: rgba(248,81,73,.2);
+  color: var(--err);
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  text-transform: uppercase;
+  font-weight: 600;
+}
 .preview-streaming-text {
   background: #0a0d12;
   border: 1px solid var(--border);
@@ -1516,8 +1565,34 @@ function extractContentParts(content) {
       }
       return {kind: "image", url: null};
     }
+    // Anthropic tool_use (assistant turn)
+    if (p.type === "tool_use") {
+      return {
+        kind: "tool_use",
+        name: p.name || "?",
+        id: p.id || null,
+        input: p.input,
+      };
+    }
+    // Anthropic tool_result (user turn — feeding a tool's output back)
+    if (p.type === "tool_result") {
+      return {
+        kind: "tool_result",
+        tool_use_id: p.tool_use_id || null,
+        is_error: Boolean(p.is_error),
+        parts: extractContentParts(p.content),
+      };
+    }
     return {kind: "unknown"};
   }).filter(p => p.kind !== "text" || p.text);
+}
+
+function formatJson(v) {
+  try {
+    return JSON.stringify(v, null, 2);
+  } catch {
+    return String(v);
+  }
 }
 
 function buildRequestPreview(req) {
@@ -1547,38 +1622,77 @@ function buildResponsePreviewFromBody(req) {
   // OpenAI chat-completions shape.
   if (Array.isArray(obj.choices) && obj.choices.length > 0) {
     const msg = obj.choices[0].message;
-    if (msg && typeof msg.content === "string" && msg.content) {
-      return {ok: true, text: msg.content};
+    if (!msg || typeof msg !== "object") return {ok: false};
+    const parts = [];
+    if (typeof msg.content === "string" && msg.content) {
+      parts.push({kind: "text", text: msg.content});
+    } else if (Array.isArray(msg.content)) {
+      for (const p of extractContentParts(msg.content)) parts.push(p);
     }
-    if (msg && Array.isArray(msg.content)) {
-      const parts = extractContentParts(msg.content);
-      if (parts.length) return {ok: true, parts};
+    if (Array.isArray(msg.tool_calls)) {
+      for (const tc of msg.tool_calls) {
+        if (!tc || typeof tc !== "object") continue;
+        const fn = tc.function || {};
+        let parsedArgs = null;
+        if (typeof fn.arguments === "string") {
+          parsedArgs = tryParseJSON(fn.arguments);
+          if (parsedArgs === null) parsedArgs = fn.arguments; // raw string fallback
+        }
+        parts.push({
+          kind: "tool_use",
+          name: fn.name || "?",
+          id: tc.id || null,
+          input: parsedArgs,
+        });
+      }
     }
+    if (parts.length) return {ok: true, parts};
   }
-  // Anthropic messages shape: top-level content[] of blocks.
+  // Anthropic messages shape: top-level content[] of blocks (text, tool_use, …).
   if (Array.isArray(obj.content)) {
-    const texts = obj.content
-      .filter(b => b && b.type === "text" && typeof b.text === "string")
-      .map(b => b.text);
-    if (texts.length) return {ok: true, text: texts.join("\n\n")};
+    const parts = extractContentParts(obj.content);
+    if (parts.length) return {ok: true, parts};
   }
   return {ok: false};
 }
 
+function renderPreviewPartHtml(p) {
+  if (p.kind === "text") {
+    return `<div class="preview-part">${escHtml(p.text)}</div>`;
+  }
+  if (p.kind === "image") {
+    if (p.url) {
+      return `<div class="preview-part image"><img src="${escHtml(p.url)}" alt="image"></div>`;
+    }
+    return `<div class="preview-part image"><span class="preview-image-missing">[image not available]</span></div>`;
+  }
+  if (p.kind === "tool_use") {
+    const bodyRaw = p.input === undefined ? ""
+      : (typeof p.input === "string" ? p.input : formatJson(p.input));
+    const idLine = p.id ? `<div class="preview-tool-id">id: ${escHtml(p.id)}</div>` : "";
+    return `<div class="preview-part tool-use">
+      <div class="preview-tool-hdr">🛠 tool_use <b>${escHtml(p.name)}</b></div>
+      ${idLine}
+      <pre class="preview-tool-body">${escHtml(bodyRaw)}</pre>
+    </div>`;
+  }
+  if (p.kind === "tool_result") {
+    const nested = (p.parts || []).map(renderPreviewPartHtml).join("");
+    const errBadge = p.is_error ? ' <span class="preview-tool-err">error</span>' : "";
+    const idLine = p.tool_use_id
+      ? `<div class="preview-tool-id">for: ${escHtml(p.tool_use_id)}</div>` : "";
+    return `<div class="preview-part tool-result">
+      <div class="preview-tool-hdr">⤺ tool_result${errBadge}</div>
+      ${idLine}
+      <div class="preview-tool-body">${nested || '<span class="preview-image-missing">[empty]</span>'}</div>
+    </div>`;
+  }
+  return `<div class="preview-part unknown">[unsupported part]</div>`;
+}
+
 function renderPreviewChatHtml(messages) {
   return `<div class="preview-chat">` + messages.map(m => {
-    const partsHtml = m.parts.map(p => {
-      if (p.kind === "text") {
-        return `<div class="preview-part">${escHtml(p.text)}</div>`;
-      }
-      if (p.kind === "image") {
-        if (p.url) {
-          return `<div class="preview-part image"><img src="${escHtml(p.url)}" alt="image"></div>`;
-        }
-        return `<div class="preview-part image"><span class="preview-image-missing">[image not available]</span></div>`;
-      }
-      return `<div class="preview-part unknown">[unsupported part]</div>`;
-    }).join("");
+    const partsHtml = m.parts.map(renderPreviewPartHtml).join("");
     return `<div class="preview-msg preview-msg-${escHtml(m.role)}">
       <div class="preview-role">${escHtml(m.role)}</div>
       <div class="preview-content">${partsHtml}</div>

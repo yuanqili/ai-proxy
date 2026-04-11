@@ -65,3 +65,91 @@ def test_parse_usage_streaming_without_usage_returns_none() -> None:
     chunks = [b'event: content_block_delta\ndata: {"delta":{"text":"hi"}}\n\n']
     u = p.parse_usage(is_streaming=True, resp_body=None, chunks=chunks)
     assert u is None
+
+
+# ── ChunkParser: text-only (regression guard) ──────────────────────────────
+
+def test_chunk_parser_plain_text_flow() -> None:
+    """Pure-text streams still extract text_delta exactly as before."""
+    p = AnthropicProvider(base_url="https://api.anthropic.com", api_key="x")
+    parser = p.make_chunk_parser()
+    t1, _ = parser.feed(
+        b'event: message_start\ndata: {"type":"message_start"}\n\n'
+    )
+    t2, _ = parser.feed(
+        b'event: content_block_start\n'
+        b'data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}\n\n'
+    )
+    t3, _ = parser.feed(
+        b'event: content_block_delta\n'
+        b'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}\n\n'
+    )
+    t4, _ = parser.feed(
+        b'event: content_block_delta\n'
+        b'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" world"}}\n\n'
+    )
+    assert t1 == ""           # message_start carries no text
+    assert t2 == ""           # text content_block_start has no header
+    assert t3 == "Hello"
+    assert t4 == " world"
+
+
+# ── ChunkParser: tool_use with input_json_delta ────────────────────────────
+
+def test_chunk_parser_tool_use_emits_header_and_json_deltas() -> None:
+    """Tool-use blocks: the parser must emit a synthetic header when the
+    content_block_start arrives AND stream each input_json_delta's partial_json
+    into text_delta so the player screen can animate the argument generation.
+    """
+    p = AnthropicProvider(base_url="https://api.anthropic.com", api_key="x")
+    parser = p.make_chunk_parser()
+    parser.feed(b'event: message_start\ndata: {"type":"message_start"}\n\n')
+    t_header, _ = parser.feed(
+        b'event: content_block_start\n'
+        b'data: {"type":"content_block_start","index":0,'
+        b'"content_block":{"type":"tool_use","name":"submit_topic_taxonomy","id":"toolu_1"}}\n\n'
+    )
+    assert "[tool_use: submit_topic_taxonomy]" in t_header
+
+    t1, _ = parser.feed(
+        b'event: content_block_delta\n'
+        b'data: {"type":"content_block_delta","index":0,'
+        b'"delta":{"type":"input_json_delta","partial_json":"{\\"tags\\":"}}\n\n'
+    )
+    t2, _ = parser.feed(
+        b'event: content_block_delta\n'
+        b'data: {"type":"content_block_delta","index":0,'
+        b'"delta":{"type":"input_json_delta","partial_json":"[{\\"id\\":\\"a\\"}]}"}}\n\n'
+    )
+    assert t1 == '{"tags":'
+    assert t2 == '[{"id":"a"}]}'
+
+
+def test_chunk_parser_mixed_text_then_tool_use() -> None:
+    """A response that starts with a text block and then emits a tool_use
+    block: text first, then a newline-separated header + JSON."""
+    p = AnthropicProvider(base_url="https://api.anthropic.com", api_key="x")
+    parser = p.make_chunk_parser()
+    parser.feed(b'event: message_start\ndata: {"type":"message_start"}\n\n')
+    parser.feed(
+        b'event: content_block_start\n'
+        b'data: {"type":"content_block_start","index":0,"content_block":{"type":"text"}}\n\n'
+    )
+    t_text, _ = parser.feed(
+        b'event: content_block_delta\n'
+        b'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Using tool."}}\n\n'
+    )
+    t_hdr, _ = parser.feed(
+        b'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n'
+        b'event: content_block_start\n'
+        b'data: {"type":"content_block_start","index":1,'
+        b'"content_block":{"type":"tool_use","name":"lookup","id":"toolu_2"}}\n\n'
+    )
+    t_json, _ = parser.feed(
+        b'event: content_block_delta\n'
+        b'data: {"type":"content_block_delta","index":1,'
+        b'"delta":{"type":"input_json_delta","partial_json":"{\\"q\\":\\"x\\"}"}}\n\n'
+    )
+    assert t_text == "Using tool."
+    assert "[tool_use: lookup]" in t_hdr
+    assert t_json == '{"q":"x"}'

@@ -124,6 +124,68 @@ def test_rewrite_untouched_for_empty_body() -> None:
     assert p.rewrite_request_body(b"", is_streaming=True) == b""
 
 
+# ── ChunkParser: tool-call streaming ───────────────────────────────────────
+
+def test_chunk_parser_plain_content_flow() -> None:
+    from aiproxy.providers.openai import OpenAIChunkParser
+    parser = OpenAIChunkParser()
+    t1, _ = parser.feed(
+        b'data: {"choices":[{"index":0,"delta":{"content":"Hello"}}]}\n\n'
+    )
+    t2, _ = parser.feed(
+        b'data: {"choices":[{"index":0,"delta":{"content":" world"}}]}\n\n'
+    )
+    assert t1 == "Hello"
+    assert t2 == " world"
+
+
+def test_chunk_parser_tool_call_header_and_arguments() -> None:
+    """First chunk has name + initial empty arguments; subsequent chunks only
+    carry argument deltas. The parser emits the [tool_use: name] header once
+    and streams the argument JSON pieces."""
+    from aiproxy.providers.openai import OpenAIChunkParser
+    parser = OpenAIChunkParser()
+    t_hdr, _ = parser.feed(
+        b'data: {"choices":[{"index":0,"delta":{'
+        b'"tool_calls":[{"index":0,"id":"call_1","type":"function",'
+        b'"function":{"name":"lookup","arguments":""}}]}}]}\n\n'
+    )
+    t1, _ = parser.feed(
+        b'data: {"choices":[{"index":0,"delta":{'
+        b'"tool_calls":[{"index":0,"function":{"arguments":"{\\"q\\":"}}]}}]}\n\n'
+    )
+    t2, _ = parser.feed(
+        b'data: {"choices":[{"index":0,"delta":{'
+        b'"tool_calls":[{"index":0,"function":{"arguments":"\\"hello\\"}"}}]}}]}\n\n'
+    )
+    assert "[tool_use: lookup]" in t_hdr
+    assert t1 == '{"q":'
+    assert t2 == '"hello"}'
+
+
+def test_chunk_parser_parallel_tool_calls() -> None:
+    """Two tool calls at indexes 0 and 1 should each get their own header."""
+    from aiproxy.providers.openai import OpenAIChunkParser
+    parser = OpenAIChunkParser()
+    t1, _ = parser.feed(
+        b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,'
+        b'"function":{"name":"foo","arguments":"{}"}}]}}]}\n\n'
+    )
+    t2, _ = parser.feed(
+        b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,'
+        b'"function":{"name":"bar","arguments":"{}"}}]}}]}\n\n'
+    )
+    # Subsequent delta for index=0 should NOT re-emit the foo header.
+    t3, _ = parser.feed(
+        b'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,'
+        b'"function":{"arguments":",\\"x\\":1}"}}]}}]}\n\n'
+    )
+    assert "[tool_use: foo]" in t1
+    assert "[tool_use: bar]" in t2
+    assert "[tool_use: foo]" not in t3
+    assert t3.endswith(',"x":1}')
+
+
 def test_parse_usage_cached_and_reasoning_tokens() -> None:
     """OpenAI returns cached_tokens under prompt_tokens_details, reasoning under completion_tokens_details."""
     p = OpenAIProvider(base_url="https://api.openai.com", api_key="x")

@@ -14,28 +14,58 @@ from aiproxy.providers.base import (
 ANTHROPIC_VERSION = "2023-06-01"
 
 
-def _anthropic_delta_text(event: dict) -> str:
-    if event.get("type") != "content_block_delta":
-        return ""
-    delta = event.get("delta")
-    if isinstance(delta, dict) and delta.get("type") == "text_delta":
-        t = delta.get("text")
-        if isinstance(t, str):
-            return t
-    return ""
-
-
 class AnthropicChunkParser(ChunkParser):
-    """Stateful SSE parser for Anthropic streams (content_block_delta events)."""
+    """Stateful SSE parser for Anthropic streams.
+
+    Extracts the progressive "payload" of every content block — regardless of
+    whether it's a plain text block (``delta.type == "text_delta"``) or a
+    tool-use block (``delta.type == "input_json_delta"``, where the tool-call
+    JSON arguments are generated token by token). A tool-use block is
+    prefixed with a synthetic ``[tool_use: <name>]`` header emitted when the
+    corresponding ``content_block_start`` arrives, so the player screen and
+    the streaming-response preview render the tool invocation in
+    chronological order.
+
+    The parser is stateful across chunks (buffers partial SSE frames) AND
+    across content blocks (remembers which index is which type).
+    """
 
     def __init__(self) -> None:
         self._buf = b""
+        # index → {"type": str, "name": str | None}; populated on content_block_start.
+        self._blocks: dict[int, dict] = {}
 
     def feed(self, chunk: bytes) -> tuple[str, list[dict]]:
         self._buf += chunk
         events, self._buf = _iter_complete_sse_events(self._buf)
-        text = "".join(_anthropic_delta_text(ev) for ev in events)
-        return (text, events)
+        parts: list[str] = []
+        for ev in events:
+            t = ev.get("type")
+            if t == "content_block_start":
+                idx = ev.get("index")
+                block = ev.get("content_block") or {}
+                btype = block.get("type")
+                if isinstance(idx, int) and isinstance(btype, str):
+                    self._blocks[idx] = {"type": btype, "name": block.get("name")}
+                    if btype == "tool_use":
+                        name = block.get("name") or "?"
+                        parts.append(f"\n\n[tool_use: {name}]\n")
+            elif t == "content_block_delta":
+                delta = ev.get("delta")
+                if not isinstance(delta, dict):
+                    continue
+                dtype = delta.get("type")
+                if dtype == "text_delta":
+                    v = delta.get("text")
+                    if isinstance(v, str):
+                        parts.append(v)
+                elif dtype == "input_json_delta":
+                    v = delta.get("partial_json")
+                    if isinstance(v, str):
+                        parts.append(v)
+                # Ignore other delta types (thinking_delta, signature_delta, …)
+                # — they land in the JSON Log tab via the raw `events` return.
+        return ("".join(parts), events)
 
 
 class AnthropicProvider(Provider):

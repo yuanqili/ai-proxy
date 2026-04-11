@@ -12,35 +12,73 @@ from aiproxy.providers.base import (
 )
 
 
-def _openai_delta_text(event: dict) -> str:
-    choices = event.get("choices")
-    if not isinstance(choices, list):
-        return ""
-    parts: list[str] = []
-    for ch in choices:
-        delta = ch.get("delta") if isinstance(ch, dict) else None
-        if isinstance(delta, dict):
-            content = delta.get("content")
-            if isinstance(content, str):
-                parts.append(content)
-    return "".join(parts)
-
-
 class OpenAIChunkParser(ChunkParser):
     """Stateful SSE parser for OpenAI / OpenRouter chat completions streams.
 
     Buffers partial SSE frames across TCP chunks. Events that span multiple
     raw chunks are attributed (text + json) to the chunk that completes them.
+
+    Handles three kinds of content in a chat-completion delta:
+      - ``delta.content`` → plain assistant text
+      - ``delta.tool_calls[]`` with ``function.name`` / ``function.arguments``
+        → streamed tool-call argument JSON. A synthetic ``[tool_use: <name>]``
+        header is emitted the first time each tool call's name is seen, and
+        subsequent argument deltas are concatenated into the text stream so
+        the player screen can animate them.
+      - (future) ``delta.refusal`` → passed through as plain text if present.
+
+    Tool call state is tracked per (choice_index, tool_index) so multi-choice
+    responses and parallel tool calls both work.
     """
 
     def __init__(self) -> None:
         self._buf = b""
+        # (choice_index, tool_index) → True once we've emitted its header
+        self._tool_header_sent: set[tuple[int, int]] = set()
 
     def feed(self, chunk: bytes) -> tuple[str, list[dict]]:
         self._buf += chunk
         events, self._buf = _iter_complete_sse_events(self._buf)
-        text = "".join(_openai_delta_text(ev) for ev in events)
-        return (text, events)
+        parts: list[str] = []
+        for ev in events:
+            choices = ev.get("choices")
+            if not isinstance(choices, list):
+                continue
+            for ch in choices:
+                if not isinstance(ch, dict):
+                    continue
+                ci = ch.get("index", 0)
+                if not isinstance(ci, int):
+                    ci = 0
+                delta = ch.get("delta")
+                if not isinstance(delta, dict):
+                    continue
+                content = delta.get("content")
+                if isinstance(content, str):
+                    parts.append(content)
+                refusal = delta.get("refusal")
+                if isinstance(refusal, str):
+                    parts.append(refusal)
+                tcs = delta.get("tool_calls")
+                if isinstance(tcs, list):
+                    for tc in tcs:
+                        if not isinstance(tc, dict):
+                            continue
+                        ti = tc.get("index", 0)
+                        if not isinstance(ti, int):
+                            ti = 0
+                        fn = tc.get("function")
+                        if not isinstance(fn, dict):
+                            continue
+                        name = fn.get("name")
+                        key = (ci, ti)
+                        if isinstance(name, str) and name and key not in self._tool_header_sent:
+                            self._tool_header_sent.add(key)
+                            parts.append(f"\n\n[tool_use: {name}]\n")
+                        args = fn.get("arguments")
+                        if isinstance(args, str):
+                            parts.append(args)
+        return ("".join(parts), events)
 
 
 def _parse_openai_usage(obj: dict) -> Usage | None:
