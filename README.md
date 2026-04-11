@@ -12,6 +12,7 @@ Unlike LiteLLM / Helicone / Langfuse / Phoenix (which log requests after complet
 - **Replay Player** — scrubber with per-chunk ticks, variable speed, live-follow, dim/typewriter modes
 - **Timeline view** — SVG lane chart grouped by model / provider / API key
 - **Full-text search** — SQLite FTS5 over request and response bodies
+- **Request tagging** — clients attach `X-AIProxy-Labels` / `X-AIProxy-Note` headers (stripped before forwarding); filter + click-to-narrow in the dashboard
 - **Per-client API keys** — issue, revoke, toggle active, track usage
 - **Versioned pricing** — per-model input/output/cached token pricing with effective dates, cost snapshot on every request
 - **Single-file vanilla JS UI** — no framework, no build step
@@ -117,7 +118,7 @@ All five planned phases are complete and merged to `main`:
 | 4 | Replay Player (media mode + JSON log) + live-follow + stateful SSE parser | ✅ |
 | 5 | Timeline tab, JSON export, Vacuum + DB stats, Overview error banner | ✅ |
 
-**173 tests passing · ~90% coverage · fully in-process test suite (no real upstream required).**
+**184 tests passing · ~90% coverage · fully in-process test suite (no real upstream required).**
 
 See `CLAUDE.md` for the full design doc, architectural decisions, and conventions, and `docs/superpowers/specs/` + `docs/superpowers/plans/` for the per-phase plans.
 

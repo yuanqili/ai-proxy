@@ -66,6 +66,8 @@ Unlike LiteLLM / Helicone / Langfuse / Phoenix, which log requests after complet
 - **VACUUM cannot run inside a transaction.** The vacuum endpoint pulls the AsyncEngine from `sessionmaker.kw["bind"]` and opens a dedicated AUTOCOMMIT connection. Do not re-implement this via a regular `AsyncSession` — it will silently wrap in BEGIN and fail.
 - **OpenRouter path convention.** The client sends to `/openrouter/chat/completions`; the provider's `upstream_path_prefix = "/api/v1"` is auto-prepended. Do **not** send to `/openrouter/api/v1/chat/completions` — that double-prefixes and 404s.
 - **Auto-injection of `stream_options.include_usage=true`.** OpenAI's streaming responses only return token usage when the client sets `stream_options.include_usage=true`. To make streaming requests billable by default, `Provider.rewrite_request_body(body, is_streaming)` is called in `PassthroughEngine.forward` *before* persist + forward. The OpenAI + OpenRouter implementations inject the flag only if the client omitted it entirely — explicit client intent (`true` or `false`) is respected unchanged. The rewritten bytes are what we persist *and* forward, so dashboard replay reflects the real upstream request. Anthropic doesn't need this (it always returns `usage` in `message_start` / `message_delta`).
+- **`X-AIProxy-*` private header namespace.** Clients can attach classification metadata to any proxied request with `X-AIProxy-Labels: prod,v1,regression` (normalized: trimmed, deduped, order preserved) and `X-AIProxy-Note: free-form text`. The proxy reads these into the `requests.labels` / `requests.note` columns and then strips them via `clean_upstream_headers` so the upstream never sees them. Labels are filterable via `/api/requests?label=prod&label=v1` (intersection semantics — row must contain *all* passed labels). Stored as a comma-joined string; matched via the 4-pattern LIKE trick with wildcard escaping. Adding a new header under this namespace only requires a new branch in `PassthroughEngine.forward`; the stripping rule already covers the whole prefix.
+- **Additive column migrations via `db/migrate.py`.** We don't use Alembic. For additive schema changes (new nullable columns), `ensure_requests_columns` runs `PRAGMA table_info` + `ALTER TABLE ADD COLUMN` on startup — idempotent, safe to call every boot. Anything needing a table rewrite (drop column, change type, add NOT NULL without default) should NOT go through this helper.
 
 ## Project layout
 
@@ -168,7 +170,7 @@ Adding a new provider: subclass `Provider`, implement the above, register it in 
 
 | Table | Purpose |
 |---|---|
-| `requests` | one row per request — pending/streaming/done/error/canceled, full headers + bodies, token counts, cost, pricing snapshot |
+| `requests` | one row per request — pending/streaming/done/error/canceled, full headers + bodies, token counts, cost, pricing snapshot, client-supplied `labels` + `note` |
 | `chunks` | `(req_id, seq, offset_ns, size, data)` — one row per streaming chunk |
 | `api_keys` | client keys — name, active flag, valid_from/to, last_used, usage_count |
 | `pricing` | versioned provider/model pricing rows with effective_from / effective_to |
@@ -183,7 +185,7 @@ Adding a new provider: subclass `Provider`, implement the above, register it in 
 
 ### Reads
 - `GET /dashboard/api/active` — snapshot of active + recent requests (registry)
-- `GET /dashboard/api/requests` — paginated, filter + FTS search
+- `GET /dashboard/api/requests` — paginated, filter (incl. `label=` repeatable) + FTS search
 - `GET /dashboard/api/requests/export` — **same filters, no pagination**, cap 10 000
 - `GET /dashboard/api/requests/{req_id}` — full detail + chunks
 - `GET /dashboard/api/requests/{req_id}/replay` — parsed chunks for the Replay Player
@@ -223,7 +225,7 @@ Single vanilla-JS SPA. Top-level tabs: **Requests · Timeline · Keys · Pricing
 | 4 | Replay Player: `/replay` endpoint, Player + JSON Log modes, live-follow, stateful SSE parser | ✅ |
 | 5 | Polish: Timeline tab, JSON export, Vacuum + DB stats, Overview error banner | ✅ |
 
-All phases merged to `main`. 173 tests passing, overall coverage ≈ 90%.
+All phases merged to `main`. 184 tests passing, overall coverage ≈ 90%.
 
 **Explicitly deferred** from Phase 5: the spec's optional "retry this request" button. Retry would introduce a second class of request (replayed vs. original) with unclear semantics around headers, auth rewriting, and timeline annotation. Revisit in a future phase if needed.
 
@@ -261,6 +263,14 @@ curl -N -H "Authorization: Bearer $CLIENT_KEY" \
   -H "Content-Type: application/json" \
   -d '{"model":"openai/gpt-4o-mini","messages":[{"role":"user","content":"Write a haiku"}],"stream":true}' \
   http://127.0.0.1:8000/openrouter/chat/completions
+
+# Tag a request with labels + a note (stripped before forwarding, stored for filtering)
+curl -H "Authorization: Bearer $CLIENT_KEY" \
+  -H "Content-Type: application/json" \
+  -H "X-AIProxy-Labels: prod,eval-pipeline,v2" \
+  -H "X-AIProxy-Note: regression check for JSON output format" \
+  -d '{"model":"gpt-4o-mini","messages":[{"role":"user","content":"ok"}]}' \
+  http://127.0.0.1:8000/openai/chat/completions
 ```
 
 Or run the bundled scripts:
@@ -274,7 +284,7 @@ To see live replay: while a stream is in flight, open the Requests tab, click th
 ## Tests
 
 ```bash
-uv run pytest -q                                      # 173 tests, ~1.8 s
+uv run pytest -q                                      # 184 tests, ~2.0 s
 uv run pytest --cov=src/aiproxy --cov-report=term     # coverage report
 uv run pytest tests/unit/ -v                          # unit only
 uv run pytest tests/integration/ -v                   # integration only

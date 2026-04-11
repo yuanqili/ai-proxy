@@ -33,6 +33,8 @@ async def create_pending(
     req_query: list[tuple[str, str]] | None,
     req_body: bytes | None,
     started_at: float,
+    labels: str | None = None,
+    note: str | None = None,
 ) -> None:
     row = Request(
         req_id=req_id,
@@ -50,6 +52,8 @@ async def create_pending(
         req_body_size=len(req_body) if req_body else 0,
         started_at=started_at,
         status="pending",
+        labels=labels,
+        note=note,
     )
     session.add(row)
     await session.flush()
@@ -117,6 +121,7 @@ async def list_with_filters(
     since: float | None = None,
     until: float | None = None,
     req_ids: list[str] | None = None,
+    labels: list[str] | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> tuple[list[Request], int]:
@@ -126,6 +131,10 @@ async def list_with_filters(
 
     If `req_ids` is provided, result is limited to those IDs (used by
     FTS-driven search to narrow the listing).
+
+    `labels` filters to rows that contain *all* of the given labels.
+    Labels are stored as normalized comma-joined strings, so membership
+    is tested via ',' || labels || ',' LIKE '%,<label>,%'.
     """
     stmt = select(Request)
     count_stmt = select(func.count()).select_from(Request)
@@ -145,6 +154,25 @@ async def list_with_filters(
         conditions.append(Request.started_at <= until)
     if req_ids is not None:
         conditions.append(Request.req_id.in_(req_ids))
+    if labels:
+        from sqlalchemy import or_
+        for label in labels:
+            # Escape LIKE wildcards that may appear inside a user-supplied
+            # label token, so `%prod` doesn't match everything.
+            esc = (
+                label.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            conditions.append(Request.labels.is_not(None))
+            conditions.append(
+                or_(
+                    Request.labels == label,
+                    Request.labels.like(f"{esc},%", escape="\\"),
+                    Request.labels.like(f"%,{esc}", escape="\\"),
+                    Request.labels.like(f"%,{esc},%", escape="\\"),
+                )
+            )
 
     for cond in conditions:
         stmt = stmt.where(cond)

@@ -360,6 +360,90 @@ async def test_non_streaming_records_upstream_sent_at_only(engine) -> None:
 
 
 @respx.mock
+async def test_aiproxy_headers_captured_and_stripped(engine) -> None:
+    """X-AIProxy-Labels / X-AIProxy-Note are stored on the row and stripped
+    from the upstream request so they never leak to the provider."""
+    eng, sm, _, _ = engine
+    route = respx.post("https://api.openai.com/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}],
+                  "usage": {"prompt_tokens": 1, "completion_tokens": 1}},
+            headers={"content-type": "application/json"},
+        )
+    )
+    provider = OpenAIProvider(base_url="https://api.openai.com", api_key="sk-test")
+    req_id = uuid.uuid4().hex[:12]
+    # Note: labels header has whitespace and a duplicate to exercise normalization.
+    client_headers = {
+        "content-type": "application/json",
+        "X-AIProxy-Labels": " prod , v1 , v1, regression ",
+        "X-AIProxy-Note": "checking json output",
+    }
+    _, _, stream = await eng.forward(
+        provider=provider,
+        client_path="chat/completions",
+        req_id=req_id,
+        method="POST",
+        client_headers=client_headers,
+        client_query=[],
+        client_body=b'{"model":"gpt-4o","messages":[]}',
+        client_ip=None,
+        client_ua=None,
+        api_key_id=None,
+        started_at=time.time(),
+    )
+    async for _ in stream:
+        pass
+
+    async with sm() as s:
+        row = await req_crud.get_by_id(s, req_id)
+        # Normalized: trimmed, deduped, order preserved.
+        assert row.labels == "prod,v1,regression"
+        assert row.note == "checking json output"
+
+    # Upstream never sees the aiproxy headers.
+    fwd_headers = dict(route.calls[0].request.headers)
+    assert "x-aiproxy-labels" not in {k.lower() for k in fwd_headers}
+    assert "x-aiproxy-note" not in {k.lower() for k in fwd_headers}
+
+
+@respx.mock
+async def test_aiproxy_headers_optional(engine) -> None:
+    """Requests without the classification headers land with labels/note = None."""
+    eng, sm, _, _ = engine
+    respx.post("https://api.openai.com/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}],
+                  "usage": {"prompt_tokens": 1, "completion_tokens": 1}},
+            headers={"content-type": "application/json"},
+        )
+    )
+    provider = OpenAIProvider(base_url="https://api.openai.com", api_key="sk-test")
+    req_id = uuid.uuid4().hex[:12]
+    _, _, stream = await eng.forward(
+        provider=provider,
+        client_path="chat/completions",
+        req_id=req_id,
+        method="POST",
+        client_headers={},
+        client_query=[],
+        client_body=b'{"model":"gpt-4o","messages":[]}',
+        client_ip=None,
+        client_ua=None,
+        api_key_id=None,
+        started_at=time.time(),
+    )
+    async for _ in stream:
+        pass
+    async with sm() as s:
+        row = await req_crud.get_by_id(s, req_id)
+        assert row.labels is None
+        assert row.note is None
+
+
+@respx.mock
 async def test_upstream_4xx_recorded_as_done(engine) -> None:
     eng, sm, _, _ = engine
     respx.post("https://api.openai.com/v1/chat/completions").mock(

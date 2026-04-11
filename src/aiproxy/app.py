@@ -26,6 +26,7 @@ from aiproxy.dashboard.routes import create_dashboard_router
 from aiproxy.db.crud import config as config_crud
 from aiproxy.db.engine import create_engine_and_sessionmaker
 from aiproxy.db.fts import install_fts_schema
+from aiproxy.db.migrate import ensure_requests_columns
 from aiproxy.db.models import Base
 from aiproxy.db.retention import retention_loop
 from aiproxy.pricing.seed import seed_pricing_if_empty
@@ -106,6 +107,7 @@ async def lifespan(app: FastAPI):
     sql_engine, sessionmaker = create_engine_and_sessionmaker(settings.database_url)
     async with sql_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await ensure_requests_columns(conn)
         await install_fts_schema(conn)
 
     # Seed pricing if the table is empty (first-run bootstrap)

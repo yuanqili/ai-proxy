@@ -178,6 +178,7 @@ def create_dashboard_router(
         providers = qp.getlist("provider") or None
         models = qp.getlist("model") or None
         statuses = qp.getlist("status") or None
+        labels = qp.getlist("label") or None
         search = qp.get("q")
         limit = int(qp.get("limit", "50"))
         offset = int(qp.get("offset", "0"))
@@ -199,6 +200,7 @@ def create_dashboard_router(
                 since=since,
                 until=until,
                 req_ids=req_ids,
+                labels=labels,
                 limit=limit,
                 offset=offset,
             )
@@ -220,6 +222,7 @@ def create_dashboard_router(
         providers = qp.getlist("provider") or None
         models = qp.getlist("model") or None
         statuses = qp.getlist("status") or None
+        labels = qp.getlist("label") or None
         search = qp.get("q")
         since = float(qp["since"]) if qp.get("since") else None
         until = float(qp["until"]) if qp.get("until") else None
@@ -241,6 +244,7 @@ def create_dashboard_router(
                 since=since,
                 until=until,
                 req_ids=req_ids,
+                labels=labels,
                 limit=EXPORT_CAP,
                 offset=0,
             )
@@ -674,6 +678,8 @@ def _serialize_row_summary(row: RequestModel) -> dict:
         "chunk_count": row.chunk_count,
         "binaries_stripped": bool(row.binaries_stripped),
         "api_key_id": row.api_key_id,
+        "labels": row.labels,
+        "note": row.note,
     }
 
 

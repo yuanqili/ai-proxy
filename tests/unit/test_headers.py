@@ -46,3 +46,19 @@ def test_case_insensitive() -> None:
     assert "Connection" not in out
     assert "CONTENT-LENGTH" not in out
     assert out["X-Foo"] == "bar"
+
+
+def test_strips_aiproxy_namespace() -> None:
+    """Private X-AIProxy-* headers must never be forwarded to upstreams."""
+    src = {
+        "authorization": "Bearer abc",
+        "content-type": "application/json",
+        "x-aiproxy-labels": "prod,v1",
+        "x-aiproxy-note": "regression test",
+        "X-AIProxy-Future-Field": "something",
+    }
+    out = clean_upstream_headers(src)
+    assert out == {
+        "authorization": "Bearer abc",
+        "content-type": "application/json",
+    }

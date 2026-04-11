@@ -19,6 +19,32 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from aiproxy.bus import StreamBus
 from aiproxy.core.headers import clean_downstream_headers, clean_upstream_headers
+
+
+def _normalize_labels(raw: str | None) -> str | None:
+    """Parse a user-supplied X-AIProxy-Labels header into a canonical
+    comma-separated string: trimmed tokens, duplicates removed, order
+    preserved. Returns None if the result is empty."""
+    if not raw:
+        return None
+    seen: set[str] = set()
+    out: list[str] = []
+    for tok in raw.split(","):
+        t = tok.strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return ",".join(out) if out else None
+
+
+def _lookup_header(headers: dict[str, str], name: str) -> str | None:
+    """Case-insensitive header lookup."""
+    want = name.lower()
+    for k, v in headers.items():
+        if k.lower() == want:
+            return v
+    return None
 from aiproxy.db.crud import chunks as chunks_crud
 from aiproxy.db.crud import requests as req_crud
 from aiproxy.db.models import Request
@@ -172,6 +198,13 @@ class PassthroughEngine:
         model = provider.extract_model(client_body)
         is_streaming = provider.is_streaming_request(client_body, client_headers)
 
+        # Extract client-supplied classification metadata from private headers.
+        # These are stripped before forwarding (clean_upstream_headers), but
+        # preserved in the persisted req_headers record so replays see exactly
+        # what the client sent.
+        labels = _normalize_labels(_lookup_header(client_headers, "x-aiproxy-labels"))
+        note = _lookup_header(client_headers, "x-aiproxy-note")
+
         # Let the provider rewrite the body before we persist or forward it.
         # For OpenAI-family streaming requests this injects
         # `stream_options.include_usage=true` when the client omitted it, so
@@ -196,6 +229,8 @@ class PassthroughEngine:
                 req_query=client_query or None,
                 req_body=client_body,
                 started_at=started_at,
+                labels=labels,
+                note=note,
             )
             await session.commit()
 

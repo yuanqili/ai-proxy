@@ -78,6 +78,12 @@ class Request(Base):
     chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     binaries_stripped: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Client-supplied classification metadata (stripped from upstream-bound
+    # headers before forwarding). Populated from X-AIProxy-Labels /
+    # X-AIProxy-Note. `labels` is a normalized comma-separated list.
+    labels: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+
     __table_args__ = (
         Index("idx_requests_started", "started_at"),
         Index("idx_requests_provider_model", "provider", "model"),

@@ -166,6 +166,28 @@ a:hover { text-decoration: underline; }
 .req-row-model { font-family: var(--mono); font-size: 10px; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; text-align: right; }
 .req-row-meta { margin-top: 3px; font-size: 11px; color: var(--muted); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .req-row-endpoint { font-family: var(--mono); font-size: 10px; }
+.req-row-labels {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.label-pill {
+  display: inline-block;
+  background: rgba(139,148,158,.15);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.label-pill:hover {
+  background: rgba(88,166,255,.2);
+  border-color: var(--accent);
+}
 .status-dot {
   display: inline-block;
   width: 8px; height: 8px;
@@ -797,6 +819,7 @@ a:hover { text-decoration: underline; }
       <option value="canceled">canceled</option>
     </select>
     <input class="filter-input" id="req-search" type="search" placeholder="Search…" />
+    <input class="filter-input" id="filter-labels" type="text" placeholder="labels (comma-separated)" style="width:220px" />
     <button class="btn-secondary" id="refresh-btn">Refresh</button>
     <button class="btn-secondary" id="export-btn">Export JSON</button>
   </div>
@@ -1222,14 +1245,21 @@ function mergeAndRender() {
    Requests — list
    ════════════════════════════════════════════════════════════════════ */
 
+function parseLabelsFilter() {
+  const raw = document.getElementById("filter-labels").value || "";
+  return raw.split(",").map(s => s.trim()).filter(Boolean);
+}
+
 async function loadRequests(append = false) {
   const params = new URLSearchParams();
   const provider = document.getElementById("filter-provider").value;
   const status   = document.getElementById("filter-status").value;
   const search   = document.getElementById("req-search").value.trim();
+  const labels   = parseLabelsFilter();
   if (provider) params.set("provider", provider);
   if (status)   params.set("status", status);
   if (search)   params.set("q", search);
+  for (const lb of labels) params.append("label", lb);
   if (append)   params.set("offset", String(reqOffset));
   params.set("limit", String(REQ_LIMIT));
 
@@ -1255,6 +1285,18 @@ async function loadRequests(append = false) {
   mergeAndRender();
 }
 
+function labelsToArray(raw) {
+  if (!raw) return [];
+  return raw.split(",").map(s => s.trim()).filter(Boolean);
+}
+
+function renderLabelPills(labelsArr) {
+  if (!labelsArr.length) return "";
+  return `<div class="req-row-labels">` + labelsArr.map(lb =>
+    `<span class="label-pill" data-label="${escHtml(lb)}">${escHtml(lb)}</span>`
+  ).join("") + `</div>`;
+}
+
 function renderList(rows) {
   const listEl = document.getElementById("req-list");
   listEl.innerHTML = "";
@@ -1262,6 +1304,7 @@ function renderList(rows) {
     const div = document.createElement("div");
     div.className = "req-row" + (row.req_id === selectedReqId ? " selected" : "");
     div.dataset.id = row.req_id;
+    const labelsArr = labelsToArray(row.labels);
     div.innerHTML = `
       <div class="req-row-top">
         <span class="status-dot ${escHtml(row.status)}"></span>
@@ -1274,10 +1317,29 @@ function renderList(rows) {
         <span>${fmtCost(row.cost_usd)}</span>
         <span>${fmtTokens(row)}</span>
         <span style="margin-left:auto">${timeAgo(row.started_at)}</span>
-      </div>`;
-    div.addEventListener("click", () => selectRequest(row.req_id));
+      </div>
+      ${renderLabelPills(labelsArr)}`;
+    div.addEventListener("click", (e) => {
+      // Clicking a label pill filters by it instead of opening the request.
+      const pill = e.target.closest(".label-pill");
+      if (pill) {
+        e.stopPropagation();
+        filterByLabel(pill.dataset.label);
+        return;
+      }
+      selectRequest(row.req_id);
+    });
     listEl.appendChild(div);
   }
+}
+
+function filterByLabel(label) {
+  const input = document.getElementById("filter-labels");
+  const existing = parseLabelsFilter();
+  if (existing.includes(label)) return;   // already filtered
+  existing.push(label);
+  input.value = existing.join(", ");
+  loadRequests();
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -1412,7 +1474,16 @@ function renderOverview(req) {
     ${row("Cost", fmtCost(req.cost_usd))}
     ${row("Pricing ID", req.pricing_id != null ? String(req.pricing_id) : "—")}
     ${row("Binaries stripped", req.binaries_stripped ? "yes" : "no")}
+    ${row("Labels", (() => {
+        const arr = labelsToArray(req.labels);
+        return arr.length ? renderLabelPills(arr) : "—";
+      })())}
+    ${row("Note", req.note ? escHtml(req.note) : "—")}
   </table>`;
+
+  // Wire label pill clicks inside Overview to filter the list by that label.
+  el.querySelectorAll(".label-pill").forEach(p =>
+    p.addEventListener("click", () => filterByLabel(p.dataset.label)));
 }
 
 /* ── Preview helpers (Plan A: chat messages + text/image content parts) ── */
@@ -2174,6 +2245,11 @@ document.getElementById("req-search").addEventListener("input", () => {
   searchTimer = setTimeout(() => loadRequests(), 300);
 });
 
+document.getElementById("filter-labels").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadRequests(), 300);
+});
+
 document.getElementById("refresh-btn").addEventListener("click", () => loadRequests());
 
 document.getElementById("export-btn").addEventListener("click", async () => {
@@ -2181,9 +2257,11 @@ document.getElementById("export-btn").addEventListener("click", async () => {
   const provider = document.getElementById("filter-provider").value;
   const status   = document.getElementById("filter-status").value;
   const search   = document.getElementById("req-search").value.trim();
+  const labels   = parseLabelsFilter();
   if (provider) params.set("provider", provider);
   if (status)   params.set("status", status);
   if (search)   params.set("q", search);
+  for (const lb of labels) params.append("label", lb);
   const url = "/dashboard/api/requests/export" + (params.toString() ? "?" + params : "");
   const btn = document.getElementById("export-btn");
   btn.disabled = true;
