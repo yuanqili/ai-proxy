@@ -445,9 +445,12 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 8px;
-  max-height: 300px;
+  max-height: 360px;
   overflow-y: auto;
 }
+/* When the body is also .code-block (highlighted JSON), tighten the max-height
+   override since .code-block's default is viewport-height based. */
+.preview-tool-body.code-block { max-height: 360px; }
 .preview-tool-err {
   display: inline-block;
   background: rgba(248,81,73,.2);
@@ -1667,13 +1670,28 @@ function renderPreviewPartHtml(p) {
     return `<div class="preview-part image"><span class="preview-image-missing">[image not available]</span></div>`;
   }
   if (p.kind === "tool_use") {
-    const bodyRaw = p.input === undefined ? ""
-      : (typeof p.input === "string" ? p.input : formatJson(p.input));
     const idLine = p.id ? `<div class="preview-tool-id">id: ${escHtml(p.id)}</div>` : "";
+    let bodyHtml;
+    if (p.input == null) {
+      bodyHtml = '<pre class="preview-tool-body preview-image-missing">[no input]</pre>';
+    } else if (typeof p.input === "object") {
+      // Structured JSON → syntax-highlight with the same formatter used by
+      // the Headers/Body panels.
+      bodyHtml = `<div class="code-block preview-tool-body">${highlightJSON(p.input)}</div>`;
+    } else if (typeof p.input === "string") {
+      // Raw string (e.g. partial / unparseable JSON from streaming).
+      // Attempt one final parse, otherwise show as-is.
+      const parsed = tryParseJSON(p.input);
+      bodyHtml = parsed !== null
+        ? `<div class="code-block preview-tool-body">${highlightJSON(parsed)}</div>`
+        : `<pre class="preview-tool-body">${escHtml(p.input)}</pre>`;
+    } else {
+      bodyHtml = `<pre class="preview-tool-body">${escHtml(String(p.input))}</pre>`;
+    }
     return `<div class="preview-part tool-use">
       <div class="preview-tool-hdr">🛠 tool_use <b>${escHtml(p.name)}</b></div>
       ${idLine}
-      <pre class="preview-tool-body">${escHtml(bodyRaw)}</pre>
+      ${bodyHtml}
     </div>`;
   }
   if (p.kind === "tool_result") {
@@ -1753,9 +1771,140 @@ async function ensureReplayDataFor(reqId) {
   return data;
 }
 
-function joinChunkText(chunks) {
-  if (!Array.isArray(chunks)) return "";
-  return chunks.map(c => c.text_delta || "").join("");
+/* ── Streaming response reconstruction ──────────────────────────────────
+   Walks the flat list of parser events from every chunk and rebuilds a
+   structured list of content blocks: {kind: "text"|"tool_use", ...}. Keeps
+   tool invocations separate from surrounding text so each can be rendered
+   with the right style. Live-follow safe: partial JSON stays as a string
+   and renders as pre until the stream completes and it parses cleanly. */
+
+function _flattenEvents(chunks) {
+  const out = [];
+  if (!Array.isArray(chunks)) return out;
+  for (const c of chunks) {
+    if (Array.isArray(c.events)) {
+      for (const ev of c.events) out.push(ev);
+    }
+  }
+  return out;
+}
+
+function reconstructAnthropicBlocks(events) {
+  const blocks = [];
+  const byIdx = {};
+  for (const ev of events) {
+    if (!ev || typeof ev !== "object") continue;
+    if (ev.type === "content_block_start" && typeof ev.index === "number") {
+      const cb = ev.content_block || {};
+      if (cb.type === "tool_use") {
+        const b = {kind: "tool_use", name: cb.name || "?", id: cb.id || null, json: ""};
+        byIdx[ev.index] = b;
+        blocks.push(b);
+      } else if (cb.type === "text") {
+        const b = {kind: "text", text: ""};
+        byIdx[ev.index] = b;
+        blocks.push(b);
+      } else if (cb.type === "thinking") {
+        const b = {kind: "thinking", text: ""};
+        byIdx[ev.index] = b;
+        blocks.push(b);
+      }
+    } else if (ev.type === "content_block_delta" && typeof ev.index === "number") {
+      const b = byIdx[ev.index];
+      if (!b) continue;
+      const d = ev.delta || {};
+      if (d.type === "text_delta" && typeof d.text === "string") {
+        if (b.kind === "text") b.text += d.text;
+      } else if (d.type === "input_json_delta" && typeof d.partial_json === "string") {
+        if (b.kind === "tool_use") b.json += d.partial_json;
+      } else if (d.type === "thinking_delta" && typeof d.thinking === "string") {
+        if (b.kind === "thinking") b.text += d.thinking;
+      }
+    }
+  }
+  return blocks;
+}
+
+function reconstructOpenAIBlocks(events) {
+  let textBuf = "";
+  const tools = [];
+  const byKey = {};
+  for (const ev of events) {
+    if (!ev || typeof ev !== "object") continue;
+    const choices = ev.choices;
+    if (!Array.isArray(choices)) continue;
+    for (const ch of choices) {
+      if (!ch || typeof ch !== "object") continue;
+      const ci = typeof ch.index === "number" ? ch.index : 0;
+      const d = ch.delta;
+      if (!d || typeof d !== "object") continue;
+      if (typeof d.content === "string") textBuf += d.content;
+      if (typeof d.refusal === "string") textBuf += d.refusal;
+      if (Array.isArray(d.tool_calls)) {
+        for (const tc of d.tool_calls) {
+          if (!tc || typeof tc !== "object") continue;
+          const ti = typeof tc.index === "number" ? tc.index : 0;
+          const key = ci + ":" + ti;
+          if (!byKey[key]) {
+            byKey[key] = {kind: "tool_use", name: null, id: null, json: ""};
+            tools.push(byKey[key]);
+          }
+          const slot = byKey[key];
+          if (typeof tc.id === "string" && !slot.id) slot.id = tc.id;
+          const fn = tc.function;
+          if (fn && typeof fn === "object") {
+            if (typeof fn.name === "string" && !slot.name) slot.name = fn.name;
+            if (typeof fn.arguments === "string") slot.json += fn.arguments;
+          }
+        }
+      }
+    }
+  }
+  const blocks = [];
+  if (textBuf) blocks.push({kind: "text", text: textBuf});
+  for (const t of tools) {
+    if (!t.name) t.name = "?";
+    blocks.push(t);
+  }
+  return blocks;
+}
+
+function reconstructStreamingBlocks(req, replayData) {
+  const events = _flattenEvents(replayData && replayData.chunks);
+  if (!events.length) return [];
+  if (req.provider === "anthropic") return reconstructAnthropicBlocks(events);
+  return reconstructOpenAIBlocks(events);   // openai + openrouter (same SSE shape)
+}
+
+function renderStreamingBlocksHtml(blocks) {
+  if (!blocks.length) return "";
+  const partsHtml = blocks.map(b => {
+    if (b.kind === "text" || b.kind === "thinking") {
+      const cls = b.kind === "thinking" ? "preview-part thinking" : "preview-part";
+      const prefix = b.kind === "thinking"
+        ? '<div class="preview-tool-hdr">💭 thinking</div>' : "";
+      return `<div class="${cls}">${prefix}${escHtml(b.text || "")}</div>`;
+    }
+    if (b.kind === "tool_use") {
+      const parsed = tryParseJSON(b.json);
+      const body = parsed !== null
+        ? `<div class="code-block preview-tool-body">${highlightJSON(parsed)}</div>`
+        : `<pre class="preview-tool-body">${escHtml(b.json || "")}</pre>`;
+      const idLine = b.id ? `<div class="preview-tool-id">id: ${escHtml(b.id)}</div>` : "";
+      return `<div class="preview-part tool-use">
+        <div class="preview-tool-hdr">🛠 tool_use <b>${escHtml(b.name || "?")}</b></div>
+        ${idLine}
+        ${body}
+      </div>`;
+    }
+    return "";
+  }).join("");
+  return `<div class="preview-chat">
+    <div class="preview-msg preview-msg-assistant">
+      <div class="preview-role">assistant</div>
+      <div class="preview-content">${partsHtml}</div>
+    </div>
+  </div>`;
 }
 
 async function renderBodyPanel(side, req) {
@@ -1778,7 +1927,7 @@ async function renderBodyPanel(side, req) {
   }
 
   // Response preview:
-  //   streaming → fetch /replay (cached), concat text_delta
+  //   streaming → fetch /replay (cached), rebuild structured blocks from events
   //   non-streaming → parse body JSON synchronously
   if (req.is_streaming) {
     // Paint a loading placeholder first so Headers/Body are already visible.
@@ -1789,12 +1938,12 @@ async function renderBodyPanel(side, req) {
     const data = await ensureReplayDataFor(req.req_id);
     // Guard against the user having switched away while we awaited.
     if (selectedReqId !== req.req_id) return;
-    const text = data ? joinChunkText(data.chunks) : "";
-    const previewHtml = text
-      ? renderPreviewTextHtml(text)
+    const blocks = data ? reconstructStreamingBlocks(req, data) : [];
+    const previewHtml = blocks.length
+      ? renderStreamingBlocksHtml(blocks)
       : PREVIEW_FALLBACK_RESP;
     el.innerHTML = buildCollapsibleSections({
-      previewHtml, headers, query, bodyB64, previewOpen: Boolean(text),
+      previewHtml, headers, query, bodyB64, previewOpen: blocks.length > 0,
     });
     return;
   }
