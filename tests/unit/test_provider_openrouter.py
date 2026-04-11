@@ -32,3 +32,29 @@ def test_parse_usage_matches_openai_format() -> None:
     u = p.parse_usage(is_streaming=False, resp_body=body, chunks=None)
     assert u.input_tokens == 7
     assert u.output_tokens == 3
+
+
+import json
+
+
+def test_rewrite_injects_include_usage_on_streaming() -> None:
+    """OpenRouter's API is OpenAI-compatible — same injection rules apply."""
+    p = OpenRouterProvider(base_url="https://openrouter.ai", api_key="x")
+    body = b'{"model":"openai/gpt-4o-mini","stream":true,"messages":[]}'
+    out = p.rewrite_request_body(body, is_streaming=True)
+    obj = json.loads(out)
+    assert obj["stream_options"] == {"include_usage": True}
+
+
+def test_rewrite_respects_explicit_client_choice() -> None:
+    p = OpenRouterProvider(base_url="https://openrouter.ai", api_key="x")
+    body = b'{"model":"openai/gpt-4o","stream":true,"stream_options":{"include_usage":false}}'
+    out = p.rewrite_request_body(body, is_streaming=True)
+    obj = json.loads(out)
+    assert obj["stream_options"]["include_usage"] is False
+
+
+def test_rewrite_untouched_for_non_streaming() -> None:
+    p = OpenRouterProvider(base_url="https://openrouter.ai", api_key="x")
+    body = b'{"model":"openai/gpt-4o","messages":[]}'
+    assert p.rewrite_request_body(body, is_streaming=False) == body

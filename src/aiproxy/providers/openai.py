@@ -84,6 +84,26 @@ class OpenAIProvider(Provider):
         headers["authorization"] = f"Bearer {self._api_key}"
         return headers
 
+    def rewrite_request_body(self, body: bytes, is_streaming: bool) -> bytes:
+        # Only touch streaming requests — non-stream already returns usage in body.
+        if not is_streaming or not body:
+            return body
+        try:
+            obj = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return body
+        if not isinstance(obj, dict):
+            return body
+        opts = obj.get("stream_options")
+        if isinstance(opts, dict):
+            # Respect explicit client intent either way (true or false).
+            if "include_usage" in opts:
+                return body
+            opts["include_usage"] = True
+        else:
+            obj["stream_options"] = {"include_usage": True}
+        return json.dumps(obj, separators=(",", ":")).encode("utf-8")
+
     def parse_usage(
         self,
         *,

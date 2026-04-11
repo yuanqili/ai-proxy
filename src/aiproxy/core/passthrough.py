@@ -168,6 +168,13 @@ class PassthroughEngine:
         model = provider.extract_model(client_body)
         is_streaming = provider.is_streaming_request(client_body, client_headers)
 
+        # Let the provider rewrite the body before we persist or forward it.
+        # For OpenAI-family streaming requests this injects
+        # `stream_options.include_usage=true` when the client omitted it, so
+        # we can actually bill streaming requests. Both persisted and forwarded
+        # bytes reflect what the upstream saw — keeps replay accurate.
+        client_body = provider.rewrite_request_body(client_body, is_streaming)
+
         # Persist the pending DB record
         async with self._sessionmaker() as session:
             await req_crud.create_pending(

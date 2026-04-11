@@ -65,6 +65,7 @@ Unlike LiteLLM / Helicone / Langfuse / Phoenix, which log requests after complet
 - **Route ordering inside the dashboard router.** `/api/requests/export` and similar literal paths must be declared **before** `/api/requests/{req_id}`, otherwise FastAPI matches `req_id="export"` and returns 404 from `get_by_id`.
 - **VACUUM cannot run inside a transaction.** The vacuum endpoint pulls the AsyncEngine from `sessionmaker.kw["bind"]` and opens a dedicated AUTOCOMMIT connection. Do not re-implement this via a regular `AsyncSession` — it will silently wrap in BEGIN and fail.
 - **OpenRouter path convention.** The client sends to `/openrouter/chat/completions`; the provider's `upstream_path_prefix = "/api/v1"` is auto-prepended. Do **not** send to `/openrouter/api/v1/chat/completions` — that double-prefixes and 404s.
+- **Auto-injection of `stream_options.include_usage=true`.** OpenAI's streaming responses only return token usage when the client sets `stream_options.include_usage=true`. To make streaming requests billable by default, `Provider.rewrite_request_body(body, is_streaming)` is called in `PassthroughEngine.forward` *before* persist + forward. The OpenAI + OpenRouter implementations inject the flag only if the client omitted it entirely — explicit client intent (`true` or `false`) is respected unchanged. The rewritten bytes are what we persist *and* forward, so dashboard replay reflects the real upstream request. Anthropic doesn't need this (it always returns `usage` in `message_start` / `message_delta`).
 
 ## Project layout
 
@@ -222,7 +223,7 @@ Single vanilla-JS SPA. Top-level tabs: **Requests · Timeline · Keys · Pricing
 | 4 | Replay Player: `/replay` endpoint, Player + JSON Log modes, live-follow, stateful SSE parser | ✅ |
 | 5 | Polish: Timeline tab, JSON export, Vacuum + DB stats, Overview error banner | ✅ |
 
-All phases merged to `main`. 161 tests passing, overall coverage ≈ 90%.
+All phases merged to `main`. 173 tests passing, overall coverage ≈ 90%.
 
 **Explicitly deferred** from Phase 5: the spec's optional "retry this request" button. Retry would introduce a second class of request (replayed vs. original) with unclear semantics around headers, auth rewriting, and timeline annotation. Revisit in a future phase if needed.
 
@@ -273,7 +274,7 @@ To see live replay: while a stream is in flight, open the Requests tab, click th
 ## Tests
 
 ```bash
-uv run pytest -q                                      # 161 tests, ~1.5 s
+uv run pytest -q                                      # 173 tests, ~1.8 s
 uv run pytest --cov=src/aiproxy --cov-report=term     # coverage report
 uv run pytest tests/unit/ -v                          # unit only
 uv run pytest tests/integration/ -v                   # integration only

@@ -117,7 +117,7 @@ All five planned phases are complete and merged to `main`:
 | 4 | Replay Player (media mode + JSON log) + live-follow + stateful SSE parser | ✅ |
 | 5 | Timeline tab, JSON export, Vacuum + DB stats, Overview error banner | ✅ |
 
-**161 tests passing · ~90% coverage · fully in-process test suite (no real upstream required).**
+**173 tests passing · ~90% coverage · fully in-process test suite (no real upstream required).**
 
 See `CLAUDE.md` for the full design doc, architectural decisions, and conventions, and `docs/superpowers/specs/` + `docs/superpowers/plans/` for the per-phase plans.
 

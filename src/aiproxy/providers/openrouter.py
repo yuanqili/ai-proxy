@@ -22,6 +22,13 @@ class OpenRouterProvider(Provider):
         headers.setdefault("http-referer", "https://github.com/ai-proxy")
         return headers
 
+    def rewrite_request_body(self, body: bytes, is_streaming: bool) -> bytes:
+        # OpenRouter's chat-completions API is OpenAI-compatible, so the same
+        # include_usage injection works regardless of the underlying model.
+        return OpenAIProvider(base_url="", api_key="").rewrite_request_body(
+            body, is_streaming
+        )
+
     def parse_usage(
         self,
         *,

@@ -175,6 +175,99 @@ async def test_streaming_tees_to_bus_and_persists_chunks(engine) -> None:
 
 
 @respx.mock
+async def test_openai_streaming_auto_injects_include_usage(engine) -> None:
+    """Streaming request to OpenAI without stream_options → proxy injects
+    stream_options.include_usage=true before forwarding upstream, and the
+    persisted req_body in the DB reflects the rewritten bytes."""
+    eng, sm, _, _ = engine
+    sse_stream = [
+        b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+        b'data: {"choices":[],"usage":{"prompt_tokens":4,"completion_tokens":1}}\n\n',
+        b'data: [DONE]\n\n',
+    ]
+    async def stream_content():
+        for c in sse_stream:
+            yield c
+    route = respx.post("https://api.openai.com/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=stream_content(),
+        )
+    )
+
+    provider = OpenAIProvider(base_url="https://api.openai.com", api_key="sk-test")
+    req_id = uuid.uuid4().hex[:12]
+    # Client body deliberately has NO stream_options.
+    client_body = json.dumps({
+        "model": "gpt-4o-mini",
+        "stream": True,
+        "messages": [{"role": "user", "content": "hi"}],
+    }).encode()
+
+    _, _, stream = await eng.forward(
+        provider=provider,
+        client_path="chat/completions",
+        req_id=req_id,
+        method="POST",
+        client_headers={"content-type": "application/json"},
+        client_query=[],
+        client_body=client_body,
+        client_ip=None,
+        client_ua=None,
+        api_key_id=None,
+        started_at=time.time(),
+    )
+    async for _ in stream:
+        pass
+
+    # What the upstream actually received:
+    forwarded = route.calls[0].request
+    fwd_body = json.loads(forwarded.content)
+    assert fwd_body["stream_options"] == {"include_usage": True}
+    assert fwd_body["model"] == "gpt-4o-mini"
+    assert fwd_body["stream"] is True
+    # And the persisted request body matches what went upstream (for faithful replay).
+    async with sm() as s:
+        row = await req_crud.get_by_id(s, req_id)
+        persisted = json.loads(row.req_body)
+        assert persisted["stream_options"] == {"include_usage": True}
+
+
+@respx.mock
+async def test_openai_non_streaming_body_untouched(engine) -> None:
+    """Non-streaming requests are forwarded byte-for-byte (no injection)."""
+    eng, sm, _, _ = engine
+    route = respx.post("https://api.openai.com/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "hi"}}],
+                  "usage": {"prompt_tokens": 1, "completion_tokens": 1}},
+            headers={"content-type": "application/json"},
+        )
+    )
+    provider = OpenAIProvider(base_url="https://api.openai.com", api_key="sk-test")
+    req_id = uuid.uuid4().hex[:12]
+    client_body = b'{"model":"gpt-4o","messages":[]}'
+    _, _, stream = await eng.forward(
+        provider=provider,
+        client_path="chat/completions",
+        req_id=req_id,
+        method="POST",
+        client_headers={"content-type": "application/json"},
+        client_query=[],
+        client_body=client_body,
+        client_ip=None,
+        client_ua=None,
+        api_key_id=None,
+        started_at=time.time(),
+    )
+    async for _ in stream:
+        pass
+    assert route.calls[0].request.content == client_body
+
+
+@respx.mock
 async def test_upstream_4xx_recorded_as_done(engine) -> None:
     eng, sm, _, _ = engine
     respx.post("https://api.openai.com/v1/chat/completions").mock(

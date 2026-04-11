@@ -63,6 +63,67 @@ def test_parse_usage_streaming_without_usage_returns_none() -> None:
     assert u is None
 
 
+import json
+
+
+def test_rewrite_injects_include_usage_on_streaming() -> None:
+    """Streaming request without stream_options → inject {include_usage: true}."""
+    p = OpenAIProvider(base_url="https://api.openai.com", api_key="x")
+    body = b'{"model":"gpt-4o-mini","messages":[{"role":"user","content":"hi"}],"stream":true}'
+    out = p.rewrite_request_body(body, is_streaming=True)
+    obj = json.loads(out)
+    assert obj["stream_options"] == {"include_usage": True}
+    # Original fields preserved.
+    assert obj["model"] == "gpt-4o-mini"
+    assert obj["stream"] is True
+
+
+def test_rewrite_merges_include_usage_into_existing_stream_options() -> None:
+    """Client set stream_options but not include_usage → merge, don't overwrite."""
+    p = OpenAIProvider(base_url="https://api.openai.com", api_key="x")
+    body = b'{"model":"gpt-4o","stream":true,"stream_options":{"some_future_option":42}}'
+    out = p.rewrite_request_body(body, is_streaming=True)
+    obj = json.loads(out)
+    assert obj["stream_options"]["include_usage"] is True
+    assert obj["stream_options"]["some_future_option"] == 42
+
+
+def test_rewrite_respects_explicit_include_usage_true() -> None:
+    """Client explicitly set include_usage=true → leave untouched (body returned as-is)."""
+    p = OpenAIProvider(base_url="https://api.openai.com", api_key="x")
+    body = b'{"model":"gpt-4o","stream":true,"stream_options":{"include_usage":true}}'
+    out = p.rewrite_request_body(body, is_streaming=True)
+    assert out == body  # byte-for-byte
+
+
+def test_rewrite_respects_explicit_include_usage_false() -> None:
+    """Client explicitly opted out → respect their choice, don't force-enable."""
+    p = OpenAIProvider(base_url="https://api.openai.com", api_key="x")
+    body = b'{"model":"gpt-4o","stream":true,"stream_options":{"include_usage":false}}'
+    out = p.rewrite_request_body(body, is_streaming=True)
+    obj = json.loads(out)
+    assert obj["stream_options"]["include_usage"] is False
+
+
+def test_rewrite_untouched_for_non_streaming() -> None:
+    p = OpenAIProvider(base_url="https://api.openai.com", api_key="x")
+    body = b'{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}'
+    out = p.rewrite_request_body(body, is_streaming=False)
+    assert out == body
+
+
+def test_rewrite_untouched_for_invalid_json() -> None:
+    p = OpenAIProvider(base_url="https://api.openai.com", api_key="x")
+    body = b'not json at all'
+    out = p.rewrite_request_body(body, is_streaming=True)
+    assert out == body
+
+
+def test_rewrite_untouched_for_empty_body() -> None:
+    p = OpenAIProvider(base_url="https://api.openai.com", api_key="x")
+    assert p.rewrite_request_body(b"", is_streaming=True) == b""
+
+
 def test_parse_usage_cached_and_reasoning_tokens() -> None:
     """OpenAI returns cached_tokens under prompt_tokens_details, reasoning under completion_tokens_details."""
     p = OpenAIProvider(base_url="https://api.openai.com", api_key="x")

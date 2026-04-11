@@ -79,6 +79,19 @@ class Provider(ABC):
             return False
         return isinstance(obj, dict) and bool(obj.get("stream"))
 
+    def rewrite_request_body(self, body: bytes, is_streaming: bool) -> bytes:
+        """Optionally mutate the client's request body before forwarding upstream.
+
+        Default: return unchanged. Subclasses override to inject provider-specific
+        parameters that the client likely omitted (e.g. OpenAI's
+        ``stream_options.include_usage`` which is required to get usage data back
+        on streaming responses).
+
+        The proxy persists and forwards the rewritten bytes, so the dashboard
+        replay reflects what actually reached the upstream.
+        """
+        return body
+
     def parse_usage(
         self,
         *,
