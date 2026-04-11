@@ -1309,9 +1309,14 @@ document.querySelectorAll(".detail-tab").forEach(btn =>
 function renderOverview(req) {
   const el = document.getElementById("dpanel-overview");
   const row = (k, v) => `<tr><td>${escHtml(k)}</td><td>${v}</td></tr>`;
-  const ttft = req.first_chunk_at && req.upstream_sent_at
-    ? ((req.first_chunk_at - req.upstream_sent_at) * 1000).toFixed(0) + "ms"
-    : "—";
+  let ttft;
+  if (!req.is_streaming) {
+    ttft = '<span style="color:var(--muted);font-style:italic">n/a for non-streaming request</span>';
+  } else if (req.first_chunk_at && req.upstream_sent_at) {
+    ttft = ((req.first_chunk_at - req.upstream_sent_at) * 1000).toFixed(0) + "ms";
+  } else {
+    ttft = "—";
+  }
 
   let bannerHtml = "";
   if (req.error_class) {

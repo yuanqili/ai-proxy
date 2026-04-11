@@ -41,6 +41,8 @@ async def _finalize(
     error_message: str | None,
     chunk_buffer: list[tuple[int, int, bytes]],
     is_streaming: bool,
+    upstream_sent_at: float | None,
+    first_chunk_at: float | None,
 ) -> None:
     """Persist terminal state + chunks + usage/cost for a request.
 
@@ -112,6 +114,8 @@ async def _finalize(
                 cost_usd=cost_usd,
                 pricing_id=pricing_id,
                 chunk_count=len(chunk_buffer) if is_streaming else 0,
+                upstream_sent_at=upstream_sent_at,
+                first_chunk_at=first_chunk_at,
             )
         )
         await session.commit()
@@ -222,6 +226,9 @@ class PassthroughEngine:
             params=client_query,
         )
 
+        # Capture the moment we dispatch the request to upstream, so we can
+        # compute TTFT = first_chunk_at - upstream_sent_at in the dashboard.
+        upstream_sent_at = time.time()
         try:
             upstream_resp = await self._client.send(upstream_req, stream=True)
         except httpx.ConnectError as e:
@@ -262,6 +269,7 @@ class PassthroughEngine:
         async def stream_and_persist() -> AsyncIterator[bytes]:
             chunk_buffer: list[tuple[int, int, bytes]] = []
             first_ns: int | None = None
+            first_chunk_at: float | None = None
             final_status: str = "done"
             error_class: str | None = None
             error_message: str | None = None
@@ -274,6 +282,7 @@ class PassthroughEngine:
                     ts_ns = time.monotonic_ns()
                     if first_ns is None:
                         first_ns = ts_ns
+                        first_chunk_at = time.time()
                     offset_ns = ts_ns - first_ns
                     seq = len(chunk_buffer)
                     chunk_buffer.append((seq, offset_ns, chunk))
@@ -328,6 +337,8 @@ class PassthroughEngine:
                         error_message=error_message,
                         chunk_buffer=chunk_buffer,
                         is_streaming=is_streaming,
+                        upstream_sent_at=upstream_sent_at,
+                        first_chunk_at=first_chunk_at,
                     ))
                     # Publish a final 'done' or 'error' event to the chunk channel
                     if bus.has_subscribers(req_id):

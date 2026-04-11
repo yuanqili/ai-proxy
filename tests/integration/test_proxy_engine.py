@@ -268,6 +268,98 @@ async def test_openai_non_streaming_body_untouched(engine) -> None:
 
 
 @respx.mock
+async def test_streaming_records_ttft_timestamps(engine) -> None:
+    """Streaming request finalize should persist upstream_sent_at and
+    first_chunk_at so the dashboard can compute TTFT."""
+    eng, sm, _, _ = engine
+    sse_stream = [
+        b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+        b'data: [DONE]\n\n',
+    ]
+    async def stream_content():
+        for c in sse_stream:
+            yield c
+    respx.post("https://api.openai.com/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=stream_content(),
+        )
+    )
+
+    provider = OpenAIProvider(base_url="https://api.openai.com", api_key="sk-test")
+    req_id = uuid.uuid4().hex[:12]
+    body = json.dumps({"model": "gpt-4o", "stream": True, "messages": []}).encode()
+
+    before = time.time()
+    _, _, stream = await eng.forward(
+        provider=provider,
+        client_path="chat/completions",
+        req_id=req_id,
+        method="POST",
+        client_headers={},
+        client_query=[],
+        client_body=body,
+        client_ip=None,
+        client_ua=None,
+        api_key_id=None,
+        started_at=before,
+    )
+    async for _ in stream:
+        pass
+    after = time.time()
+
+    async with sm() as s:
+        row = await req_crud.get_by_id(s, req_id)
+        assert row.upstream_sent_at is not None
+        assert row.first_chunk_at is not None
+        # Both timestamps lie within the test's wall-clock window.
+        assert before <= row.upstream_sent_at <= after
+        assert row.upstream_sent_at <= row.first_chunk_at <= after
+
+
+@respx.mock
+async def test_non_streaming_records_upstream_sent_at_only(engine) -> None:
+    """Non-streaming response has no 'first_chunk_at' — but upstream_sent_at
+    should still be set so future analytics have a dispatch timestamp."""
+    eng, sm, _, _ = engine
+    respx.post("https://api.openai.com/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "hi"}}],
+                  "usage": {"prompt_tokens": 1, "completion_tokens": 1}},
+            headers={"content-type": "application/json"},
+        )
+    )
+    provider = OpenAIProvider(base_url="https://api.openai.com", api_key="sk-test")
+    req_id = uuid.uuid4().hex[:12]
+
+    _, _, stream = await eng.forward(
+        provider=provider,
+        client_path="chat/completions",
+        req_id=req_id,
+        method="POST",
+        client_headers={},
+        client_query=[],
+        client_body=b'{"model":"gpt-4o","messages":[]}',
+        client_ip=None,
+        client_ua=None,
+        api_key_id=None,
+        started_at=time.time(),
+    )
+    async for _ in stream:
+        pass
+
+    async with sm() as s:
+        row = await req_crud.get_by_id(s, req_id)
+        assert row.upstream_sent_at is not None
+        # Non-streaming: no first chunk in the aiter_raw sense — httpx buffered
+        # the whole body into one read, which IS our "first chunk". So this
+        # may or may not be set depending on whether aiter_raw yields a chunk
+        # for buffered responses. Treat it as "may be None" and don't assert.
+
+
+@respx.mock
 async def test_upstream_4xx_recorded_as_done(engine) -> None:
     eng, sm, _, _ = engine
     respx.post("https://api.openai.com/v1/chat/completions").mock(
