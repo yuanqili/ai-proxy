@@ -35,6 +35,9 @@ async def create_pending(
     started_at: float,
     labels: str | None = None,
     note: str | None = None,
+    request_has_image: bool = False,
+    request_has_file: bool = False,
+    response_is_json: bool = False,
 ) -> None:
     row = Request(
         req_id=req_id,
@@ -54,6 +57,9 @@ async def create_pending(
         status="pending",
         labels=labels,
         note=note,
+        request_has_image=int(request_has_image),
+        request_has_file=int(request_has_file),
+        response_is_json=int(response_is_json),
     )
     session.add(row)
     await session.flush()

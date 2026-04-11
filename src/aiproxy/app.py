@@ -13,6 +13,7 @@ Phase 2 additions:
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 import httpx
@@ -22,11 +23,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from aiproxy.auth.proxy_auth import ApiKeyCache
 from aiproxy.bus import StreamBus
 from aiproxy.core.passthrough import PassthroughEngine
+from aiproxy.core.traits import DETECTOR_VERSION
 from aiproxy.dashboard.routes import create_dashboard_router
 from aiproxy.db.crud import config as config_crud
 from aiproxy.db.engine import create_engine_and_sessionmaker
 from aiproxy.db.fts import install_fts_schema
-from aiproxy.db.migrate import ensure_requests_columns
+from aiproxy.db.migrate import backfill_request_traits, ensure_requests_columns
 from aiproxy.db.models import Base
 from aiproxy.db.retention import retention_loop
 from aiproxy.pricing.seed import seed_pricing_if_empty
@@ -112,6 +114,22 @@ async def lifespan(app: FastAPI):
 
     # Seed pricing if the table is empty (first-run bootstrap)
     await seed_pricing_if_empty(sessionmaker)
+
+    # Trait backfill. The detector version is recorded in the config table;
+    # if it differs from the code's DETECTOR_VERSION, every row is re-scanned
+    # so a rule change (e.g. expanding "is JSON" to include tool-use) reaches
+    # historical data. Otherwise only NULL-flagged rows are processed.
+    log = logging.getLogger("aiproxy")
+    async with sessionmaker() as session:
+        prev_version = await config_crud.get(session, "traits.detector_version", default=0)
+        rescan = int(prev_version or 0) != DETECTOR_VERSION
+        n = await backfill_request_traits(session, rescan_all=rescan)
+        if rescan:
+            await config_crud.set_(session, "traits.detector_version", DETECTOR_VERSION)
+            await session.commit()
+            log.info("trait detector v%d: rescanned %d requests", DETECTOR_VERSION, n)
+        elif n:
+            log.info("backfilled traits for %d requests", n)
 
     http_client = _make_http_client()
     bus = StreamBus()

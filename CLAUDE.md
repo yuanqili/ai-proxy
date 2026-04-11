@@ -69,6 +69,9 @@ Unlike LiteLLM / Helicone / Langfuse / Phoenix, which log requests after complet
 - **`X-AIProxy-*` private header namespace.** Clients can attach classification metadata to any proxied request with `X-AIProxy-Labels: prod,v1,regression` (normalized: trimmed, deduped, order preserved) and `X-AIProxy-Note: free-form text`. The proxy reads these into the `requests.labels` / `requests.note` columns and then strips them via `clean_upstream_headers` so the upstream never sees them. Labels are filterable via `/api/requests?label=prod&label=v1` (intersection semantics — row must contain *all* passed labels). Stored as a comma-joined string; matched via the 4-pattern LIKE trick with wildcard escaping. Adding a new header under this namespace only requires a new branch in `PassthroughEngine.forward`; the stripping rule already covers the whole prefix.
 - **Additive column migrations via `db/migrate.py`.** We don't use Alembic. For additive schema changes (new nullable columns), `ensure_requests_columns` runs `PRAGMA table_info` + `ALTER TABLE ADD COLUMN` on startup — idempotent, safe to call every boot. Anything needing a table rewrite (drop column, change type, add NOT NULL without default) should NOT go through this helper.
 - **LiteLLM pricing catalog refresh** (`pricing/catalog.py`). Rather than manually curate `pricing_seed.json` when a new model lands, the Pricing tab has a "Refresh from LiteLLM catalog" button that pulls `model_prices_and_context_window.json` from the upstream BerriAI/litellm repo, normalizes the 2600+ entries down to our three providers (OpenAI / Anthropic / OpenRouter chat models only — Azure, Bedrock, fine-tunes, embeddings, image gen all filtered out), and diff-previews the changes (would_add / would_supersede / unchanged) before writing. OpenRouter entries have the `openrouter/` key prefix stripped so the model matches what clients send in `body.model`. Apply uses the existing `upsert_current`, which closes the prior effective row and inserts a new one — full versioned history is preserved.
+- **Request trait detection** (`core/traits.py`). At forward time, `detect_request_traits(req_body)` scans the JSON body once and returns three booleans — `request_has_image`, `request_has_file`, `response_is_json` — stored as nullable `Integer` columns on the `requests` row. Detection covers: OpenAI `image_url`/`input_image`/`file`/`input_file`, Anthropic `image`/`document`, the responses API `input` field, OpenAI/OpenRouter `response_format.{json_object,json_schema}`, and OpenAI/Anthropic `tools` (non-empty tools array implies structured JSON output). The dashboard list renders these as colored trait-icons (stream / image / file / json) slotted after each row's request id. **Version bump → full rescan**: `DETECTOR_VERSION` is compared against `config["traits.detector_version"]` on startup; if they differ, every row's flags are re-computed via `backfill_request_traits(rescan_all=True)` and the version is bumped. Otherwise only NULL-flagged rows are processed. Bump `DETECTOR_VERSION` in `core/traits.py` whenever you add or change a detection rule.
+- **Design-token CSS system** (`dashboard/static/index.html`). The `<style>` block defines a ~40-token palette in `:root` split into size/spacing/motion/radii tokens (theme-agnostic) and color tokens duplicated under `:root,[data-theme="dark"]` and `:root[data-theme="light"]`. Every component rule reads from tokens — no inline hex colors except a couple of `rgba()` shadow edge-cases. The three-state theme switch (light / dark / system) lives in the top nav; it persists preference to `localStorage["aiproxy.theme"]`, resolves "system" via `matchMedia("(prefers-color-scheme: dark)")`, and applies the resolved value via a `<head>`-inline pre-script to avoid FOUC on first paint.
+- **List pane UX**: infinite scroll via `IntersectionObserver` (sentinel `#req-list-sentinel` re-observed after each render, `rootMargin: 200px`, `inflightLoadMore` lock prevents concurrent fetches), and a draggable `#req-list-resizer` between list and detail that persists width to `localStorage["aiproxy.listPaneWidth"]` (clamped to [240, 720]). The "Load more" button is gone.
 
 ## Project layout
 
@@ -86,6 +89,7 @@ src/aiproxy/
 │
 ├── core/
 │   ├── headers.py          Hop-by-hop header stripping (upstream + downstream)
+│   ├── traits.py           detect_request_traits() — image/file/json flags from body
 │   └── passthrough.py      PassthroughEngine: forward → tee → persist → finalize
 │
 ├── providers/
@@ -102,6 +106,7 @@ src/aiproxy/
 │   ├── models.py           SQLAlchemy 2.x async models
 │   ├── fts.py              SQLite FTS5 virtual table for body/response search
 │   ├── retention.py        Background loop that strips old bodies
+│   ├── migrate.py          ensure_requests_columns + backfill_request_traits
 │   └── crud/
 │       ├── requests.py     list_with_filters, create_pending, mark_finished, mark_error
 │       ├── chunks.py       insert_batch, list_for_request
@@ -171,7 +176,7 @@ Adding a new provider: subclass `Provider`, implement the above, register it in 
 
 | Table | Purpose |
 |---|---|
-| `requests` | one row per request — pending/streaming/done/error/canceled, full headers + bodies, token counts, cost, pricing snapshot, client-supplied `labels` + `note` |
+| `requests` | one row per request — pending/streaming/done/error/canceled, full headers + bodies, token counts, cost, pricing snapshot, client-supplied `labels` + `note`, and trait flags (`request_has_image`, `request_has_file`, `response_is_json`) |
 | `chunks` | `(req_id, seq, offset_ns, size, data)` — one row per streaming chunk |
 | `api_keys` | client keys — name, active flag, valid_from/to, last_used, usage_count |
 | `pricing` | versioned provider/model pricing rows with effective_from / effective_to |
@@ -211,9 +216,9 @@ Adding a new provider: subclass `Provider`, implement the above, register it in 
 
 ## Dashboard UI (`static/index.html`)
 
-Single vanilla-JS SPA. Top-level tabs: **Requests · Timeline · Keys · Pricing · Settings**.
+Single vanilla-JS SPA. Top-level tabs: **Requests · Timeline · Keys · Pricing · Settings**. Top-right corner has a 3-state theme switch (light / dark / system) with SVG icons; preference persists to localStorage.
 
-- **Requests** — two-pane list + detail. Detail sub-tabs: Overview · Request · Response · Replay (last one hidden for non-streaming). Request + Response panels each show a collapsible Preview / Headers / Body trio — Preview renders chat messages with text + image content parts for OpenAI / Anthropic / OpenRouter chat bodies, and streaming response previews reuse the Replay tab's cached text.
+- **Requests** — two-pane list + detail with a **draggable splitter** between them and **infinite scroll** (IntersectionObserver) on the list. Each list row shows a status dot, the req id, a row of **trait icons** (stream / image / file / json in distinct colors, where the stream icon is a 3-bar equalizer that stays visible — dim when the request has finished — for any request that used a streaming response), duration / cost / tokens, and label pills. Detail sub-tabs: Overview · Request · Response · Replay (last one hidden for non-streaming). Request + Response panels each show a collapsible Preview / Headers / Body trio — Preview renders chat messages as **collapsible `<details>` blocks per role** (system/user/assistant/tool) with text + image content parts for OpenAI / Anthropic / OpenRouter chat bodies; streaming response previews reuse the Replay tab's cached text.
 - **Replay Player** — two modes: media-player UI (scrubber with per-chunk ticks, 0.5×/1×/2×/4×/∞ speeds, dim/typewriter views, TTFT jump, live-follow) and JSON Log (filterable chunk table with expand, export, jump-to-player).
 - **Timeline** — SVG lane chart grouped by model/provider/api_key, 5/15/60/360-minute windows, 3 s live polling, hover tooltip, click-to-navigate.
 - **Settings** — Retention, Batch operations (strip binaries), Database (size/counts + Vacuum).
@@ -228,7 +233,7 @@ Single vanilla-JS SPA. Top-level tabs: **Requests · Timeline · Keys · Pricing
 | 4 | Replay Player: `/replay` endpoint, Player + JSON Log modes, live-follow, stateful SSE parser | ✅ |
 | 5 | Polish: Timeline tab, JSON export, Vacuum + DB stats, Overview error banner | ✅ |
 
-All phases merged to `main`. 207 tests passing, overall coverage ≈ 90%.
+All phases merged to `main`. 234 tests passing, overall coverage ≈ 90%.
 
 **Explicitly deferred** from Phase 5: the spec's optional "retry this request" button. Retry would introduce a second class of request (replayed vs. original) with unclear semantics around headers, auth rewriting, and timeline annotation. Revisit in a future phase if needed.
 
@@ -287,7 +292,7 @@ To see live replay: while a stream is in flight, open the Requests tab, click th
 ## Tests
 
 ```bash
-uv run pytest -q                                      # 207 tests, ~2.1 s
+uv run pytest -q                                      # 234 tests, ~2.3 s
 uv run pytest --cov=src/aiproxy --cov-report=term     # coverage report
 uv run pytest tests/unit/ -v                          # unit only
 uv run pytest tests/integration/ -v                   # integration only
@@ -324,5 +329,7 @@ Test conventions:
 - Dashboard router factory — `src/aiproxy/dashboard/routes.py:109`
 - Provider ABC — `src/aiproxy/providers/base.py`
 - Chunk parser implementations — `src/aiproxy/providers/openai.py`, `.../anthropic.py`
+- Trait detector + DETECTOR_VERSION — `src/aiproxy/core/traits.py`
+- Migration + trait backfill — `src/aiproxy/db/migrate.py`
 - Frontend entry — `src/aiproxy/dashboard/static/index.html`
 - Design spec — `docs/superpowers/specs/2026-04-10-ai-proxy-with-live-dashboard-design.md`

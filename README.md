@@ -13,6 +13,8 @@ Unlike LiteLLM / Helicone / Langfuse / Phoenix (which log requests after complet
 - **Timeline view** — SVG lane chart grouped by model / provider / API key
 - **Full-text search** — SQLite FTS5 over request and response bodies
 - **Request tagging** — clients attach `X-AIProxy-Labels` / `X-AIProxy-Note` headers (stripped before forwarding); filter + click-to-narrow in the dashboard
+- **Trait icons** — each list row shows at-a-glance icons for streaming response / image payload / file payload / structured-JSON output (response_format or tool_use), computed server-side at create time and backfilled automatically when detection rules change
+- **Polished UX** — design-token CSS palette, light/dark/system theme switch (3-state toggle, no FOUC), collapsible chat previews per role, draggable list ⇆ detail splitter, infinite scroll
 - **Per-client API keys** — issue, revoke, toggle active, track usage
 - **Versioned pricing** — per-model input/output/cached token pricing with effective dates, cost snapshot on every request; one-click refresh from the LiteLLM community catalog
 - **Single-file vanilla JS UI** — no framework, no build step
@@ -80,11 +82,13 @@ Plus CRUD for keys, pricing, and runtime config.
 
 ## Dashboard tabs
 
-- **Requests** — two-pane list + detail (Overview, Request, Response, Replay); Request/Response each show collapsible Preview / Headers / Body
+- **Requests** — draggable two-pane list + detail with infinite scroll on the list. Rows show status, trait icons (stream / image / file / json), duration / cost / tokens, time-ago, and label pills. Detail tabs: Overview · Request · Response · Replay (last one hidden for non-streaming). Request/Response panels each show collapsible Preview / Headers / Body; the Preview renders chat messages as expandable `<details>` blocks per role
 - **Timeline** — SVG lane chart grouped by model / provider / API key; 3 s live polling
 - **Keys** — issue, revoke, rename, toggle active
-- **Pricing** — versioned pricing rows, adding a new row auto-closes the current effective row
+- **Pricing** — versioned pricing rows, one-click refresh from LiteLLM catalog, adding a new row auto-closes the current effective row
 - **Settings** — retention threshold, batch strip binaries, DB size / counts / Vacuum
+
+Top-right corner has a 3-state theme switch (light / dark / system).
 
 ## Project layout
 
@@ -118,7 +122,7 @@ All five planned phases are complete and merged to `main`:
 | 4 | Replay Player (media mode + JSON log) + live-follow + stateful SSE parser | ✅ |
 | 5 | Timeline tab, JSON export, Vacuum + DB stats, Overview error banner | ✅ |
 
-**207 tests passing · ~90% coverage · fully in-process test suite (no real upstream required).**
+**234 tests passing · ~90% coverage · fully in-process test suite (no real upstream required).**
 
 See `CLAUDE.md` for the full design doc, architectural decisions, and conventions, and `docs/superpowers/specs/` + `docs/superpowers/plans/` for the per-phase plans.
 

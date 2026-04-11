@@ -84,6 +84,13 @@ class Request(Base):
     labels: Mapped[str | None] = mapped_column(Text)
     note: Mapped[str | None] = mapped_column(Text)
 
+    # Coarse traits computed at create time from the request body.
+    # Powers the dashboard's at-a-glance icons. NULL means "unknown"
+    # (e.g. row predates the trait migration and hasn't been backfilled).
+    request_has_image: Mapped[int | None] = mapped_column(Integer)
+    request_has_file: Mapped[int | None] = mapped_column(Integer)
+    response_is_json: Mapped[int | None] = mapped_column(Integer)
+
     __table_args__ = (
         Index("idx_requests_started", "started_at"),
         Index("idx_requests_provider_model", "provider", "model"),

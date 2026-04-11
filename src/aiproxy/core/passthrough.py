@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from aiproxy.bus import StreamBus
 from aiproxy.core.headers import clean_downstream_headers, clean_upstream_headers
+from aiproxy.core.traits import detect_request_traits
 
 
 def _normalize_labels(raw: str | None) -> str | None:
@@ -212,6 +213,11 @@ class PassthroughEngine:
         # bytes reflect what the upstream saw — keeps replay accurate.
         client_body = provider.rewrite_request_body(client_body, is_streaming)
 
+        # Coarse trait flags for at-a-glance dashboard icons. Computed on
+        # the rewritten body so the persisted flags match what the upstream
+        # actually saw.
+        traits = detect_request_traits(client_body)
+
         # Persist the pending DB record
         async with self._sessionmaker() as session:
             await req_crud.create_pending(
@@ -231,6 +237,9 @@ class PassthroughEngine:
                 started_at=started_at,
                 labels=labels,
                 note=note,
+                request_has_image=traits["request_has_image"],
+                request_has_file=traits["request_has_file"],
+                response_is_json=traits["response_is_json"],
             )
             await session.commit()
 

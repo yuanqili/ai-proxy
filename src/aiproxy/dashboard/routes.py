@@ -730,6 +730,9 @@ def _serialize_row_summary(row: RequestModel) -> dict:
         "api_key_id": row.api_key_id,
         "labels": row.labels,
         "note": row.note,
+        "request_has_image": bool(row.request_has_image),
+        "request_has_file": bool(row.request_has_file),
+        "response_is_json": bool(row.response_is_json),
     }
 
 

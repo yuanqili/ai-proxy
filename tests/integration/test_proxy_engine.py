@@ -508,3 +508,183 @@ async def test_upstream_connect_error(engine) -> None:
         assert row is not None
         assert row.status == "error"
         assert row.error_class == "upstream_connect"
+
+
+# ── Trait detection (image / file / response_is_json) ──────────────────────
+
+async def _forward_with_body(eng, body_obj: dict) -> str:
+    provider = OpenAIProvider(base_url="https://api.openai.com", api_key="sk-test")
+    req_id = uuid.uuid4().hex[:12]
+    respx.post("https://api.openai.com/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}}],
+                  "usage": {"prompt_tokens": 1, "completion_tokens": 1}},
+            headers={"content-type": "application/json"},
+        )
+    )
+    _, _, stream = await eng.forward(
+        provider=provider,
+        client_path="chat/completions",
+        req_id=req_id,
+        method="POST",
+        client_headers={"content-type": "application/json"},
+        client_query=[],
+        client_body=json.dumps(body_obj).encode(),
+        client_ip=None,
+        client_ua=None,
+        api_key_id=None,
+        started_at=time.time(),
+    )
+    async for _ in stream:
+        pass
+    return req_id
+
+
+@respx.mock
+async def test_traits_persisted_image_request(engine) -> None:
+    eng, sm, _, _ = engine
+    req_id = await _forward_with_body(eng, {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": "look"},
+            {"type": "image_url", "image_url": {"url": "https://x/y.png"}},
+        ]}],
+    })
+    async with sm() as s:
+        row = await req_crud.get_by_id(s, req_id)
+        assert row.request_has_image == 1
+        assert row.request_has_file == 0
+        assert row.response_is_json == 0
+
+
+@respx.mock
+async def test_traits_persisted_file_request(engine) -> None:
+    eng, sm, _, _ = engine
+    req_id = await _forward_with_body(eng, {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": [
+            {"type": "file", "file": {"file_id": "file-abc"}},
+        ]}],
+    })
+    async with sm() as s:
+        row = await req_crud.get_by_id(s, req_id)
+        assert row.request_has_file == 1
+        assert row.request_has_image == 0
+
+
+@respx.mock
+async def test_traits_persisted_json_response_format(engine) -> None:
+    eng, sm, _, _ = engine
+    req_id = await _forward_with_body(eng, {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": "give me json"}],
+        "response_format": {"type": "json_object"},
+    })
+    async with sm() as s:
+        row = await req_crud.get_by_id(s, req_id)
+        assert row.response_is_json == 1
+        assert row.request_has_image == 0
+        assert row.request_has_file == 0
+
+
+@respx.mock
+async def test_traits_persisted_plain_request_all_zero(engine) -> None:
+    eng, sm, _, _ = engine
+    req_id = await _forward_with_body(eng, {
+        "model": "gpt-4o",
+        "messages": [{"role": "user", "content": "hi"}],
+    })
+    async with sm() as s:
+        row = await req_crud.get_by_id(s, req_id)
+        assert row.request_has_image == 0
+        assert row.request_has_file == 0
+        assert row.response_is_json == 0
+
+
+# ── Backfill ───────────────────────────────────────────────────────────────
+
+async def test_backfill_request_traits_updates_null_rows(db_sessionmaker) -> None:
+    """Rows inserted with NULL trait flags get scanned and updated. Idempotent."""
+    from sqlalchemy import update
+    from aiproxy.db.migrate import backfill_request_traits
+    from aiproxy.db.models import Request
+
+    sm = db_sessionmaker
+    # Seed three rows: one with image, one with response_format json, one plain.
+    bodies = {
+        "img-row": json.dumps({"messages": [{"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": "https://x"}},
+        ]}]}).encode(),
+        "json-row": json.dumps({"messages": [{"role": "user", "content": "x"}],
+                                "response_format": {"type": "json_schema",
+                                                    "json_schema": {"name": "n", "schema": {}}}}).encode(),
+        "plain-row": json.dumps({"messages": [{"role": "user", "content": "x"}]}).encode(),
+    }
+    async with sm() as s:
+        for rid, body in bodies.items():
+            await req_crud.create_pending(
+                s, req_id=rid, api_key_id=None, provider="openai",
+                endpoint="/chat/completions", method="POST", model="gpt-4o",
+                is_streaming=False, client_ip=None, client_ua=None,
+                req_headers={}, req_query=None, req_body=body,
+                started_at=time.time(),
+            )
+        # Force the trait columns to NULL to simulate a pre-migration row.
+        await s.execute(update(Request).values(
+            request_has_image=None, request_has_file=None, response_is_json=None,
+        ))
+        await s.commit()
+
+    async with sm() as s:
+        n = await backfill_request_traits(s)
+    assert n == 3
+
+    async with sm() as s:
+        img = await req_crud.get_by_id(s, "img-row")
+        jsn = await req_crud.get_by_id(s, "json-row")
+        plain = await req_crud.get_by_id(s, "plain-row")
+    assert img.request_has_image == 1
+    assert jsn.response_is_json == 1
+    assert plain.request_has_image == 0 and plain.response_is_json == 0
+
+    # Idempotent: second pass updates nothing because no NULL rows remain.
+    async with sm() as s:
+        n2 = await backfill_request_traits(s)
+    assert n2 == 0
+
+
+async def test_backfill_rescan_all_reprocesses_already_scanned_rows(db_sessionmaker) -> None:
+    """rescan_all=True walks every row regardless of NULL state. Used when
+    DETECTOR_VERSION bumps and historical rows need re-classification."""
+    from aiproxy.db.migrate import backfill_request_traits
+
+    sm = db_sessionmaker
+    body = json.dumps({
+        "messages": [{"role": "user", "content": "x"}],
+        "tools": [{"type": "function", "function": {"name": "f", "parameters": {}}}],
+    }).encode()
+    async with sm() as s:
+        await req_crud.create_pending(
+            s, req_id="row-tools", api_key_id=None, provider="openai",
+            endpoint="/chat/completions", method="POST", model="gpt-4o",
+            is_streaming=False, client_ip=None, client_ua=None,
+            req_headers={}, req_query=None, req_body=body,
+            started_at=time.time(),
+            # Simulate an old detector that didn't recognise tools.
+            response_is_json=False,
+        )
+        await s.commit()
+
+    # NULL-only mode: nothing to do, row already has flags set (to 0).
+    async with sm() as s:
+        assert await backfill_request_traits(s) == 0
+        row = await req_crud.get_by_id(s, "row-tools")
+        assert row.response_is_json == 0
+
+    # rescan_all: walks the row, new detector marks it as JSON.
+    async with sm() as s:
+        n = await backfill_request_traits(s, rescan_all=True)
+        assert n == 1
+        row = await req_crud.get_by_id(s, "row-tools")
+        assert row.response_is_json == 1
