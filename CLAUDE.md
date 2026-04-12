@@ -115,12 +115,13 @@ src/aiproxy/
 │       └── config.py       runtime key/value config
 │
 ├── pricing/
+│   ├── catalog.py          LiteLLM catalog refresh (fetch → diff → apply)
 │   ├── compute.py          compute_cost(provider, model, usage) → (pricing_id, cost_usd)
 │   └── seed.py             Bootstrap pricing rows on first run
 │
 └── dashboard/
     ├── routes.py           All HTTP + WS endpoints (the monolith of the dashboard)
-    └── static/index.html   Single-file vanilla JS SPA (~2300 lines)
+    └── static/index.html   Single-file vanilla JS SPA (~3600 lines)
 
 tests/
 ├── unit/                   Pure unit tests (no IO, no sessionmaker)
@@ -134,6 +135,9 @@ docs/superpowers/
     ├── 2026-04-11-phase-3-rich-dashboard.md
     ├── 2026-04-11-phase-4-replay-player.md
     └── 2026-04-11-phase-5-polish.md
+
+docs/
+└── sessions/               Per-session retrospective logs
 
 scripts/
 ├── create_api_key.py       Bootstrap a client key into the DB
@@ -325,8 +329,8 @@ Test conventions:
 
 ## Useful file pointers
 
-- Passthrough hot path — `src/aiproxy/core/passthrough.py:255` (`stream_and_persist`)
-- Dashboard router factory — `src/aiproxy/dashboard/routes.py:109`
+- Passthrough hot path — `src/aiproxy/core/passthrough.py:313` (`stream_and_persist`)
+- Dashboard router factory — `src/aiproxy/dashboard/routes.py:110`
 - Provider ABC — `src/aiproxy/providers/base.py`
 - Chunk parser implementations — `src/aiproxy/providers/openai.py`, `.../anthropic.py`
 - Trait detector + DETECTOR_VERSION — `src/aiproxy/core/traits.py`
