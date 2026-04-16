@@ -1,0 +1,55 @@
+# Server deployment on tencent-singapore.
+#
+# Expected layout on the server:
+#   /home/ubuntu/stacks/ai-proxy/
+#       .env                  # secrets (not in git, chmod 600)
+#       <clone of this repo>
+#
+# One-time setup:
+#   cd /home/ubuntu/stacks && git clone <repo> ai-proxy && cd ai-proxy
+#   cp .env.example .env   # fill in keys; set SECURE_COOKIES=true
+#   docker compose -f compose.server.yml up --build -d
+#
+# Caddy (already running under /home/ubuntu/stacks/caddy) terminates TLS at
+# ai.sat1600ap5.online and reverse-proxies to this container's port 8000 via
+# the shared `caddy-net` bridge. See sites/002-bollegecoard.caddy.
+
+services:
+  aiproxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-proxy:latest
+    container_name: aiproxy           # Caddy upstream resolves this name
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      DATABASE_URL: "sqlite+aiosqlite:////app/data/aiproxy.db"
+      # Caddy terminates HTTPS — cookie must carry Secure flag.
+      SECURE_COOKIES: "true"
+    volumes:
+      - aiproxy-data:/app/data
+    networks:
+      - caddy-net
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+networks:
+  caddy-net:
+    external: true
+
+volumes:
+  aiproxy-data:

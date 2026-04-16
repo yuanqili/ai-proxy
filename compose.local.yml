@@ -1,0 +1,33 @@
+# Local docker run. Dashboard reachable at http://127.0.0.1:8000/dashboard/
+#
+# Usage:
+#   cp .env.example .env              # fill in keys + master key
+#   docker compose -f compose.local.yml up --build -d
+#   docker compose -f compose.local.yml logs -f
+#
+# SQLite lives in ./data/aiproxy.db (bind-mounted, survives `down`).
+
+services:
+  aiproxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-proxy:local
+    container_name: ai-proxy
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8000"
+      DATABASE_URL: "sqlite+aiosqlite:////app/data/aiproxy.db"
+      SECURE_COOKIES: "false"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

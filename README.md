@@ -352,12 +352,63 @@ Manual smoke tests against real upstreams:
 uv run python scripts/test_all.py   # hits all 3 providers, prints TTFT + cost
 ```
 
+## Deployment
+
+Two Compose files ship with the repo — one for local Docker, one for a server behind Caddy. Both use the same `Dockerfile` (multi-stage `uv` build, non-root runtime, healthcheck).
+
+### Local Docker
+
+```bash
+cp .env.example .env                                  # fill in provider keys + PROXY_MASTER_KEY
+docker compose -f compose.local.yml up --build -d
+docker compose -f compose.local.yml logs -f
+```
+
+- Binds `127.0.0.1:8000` — dashboard at `http://127.0.0.1:8000/dashboard/`
+- SQLite file at `./data/aiproxy.db` (bind-mounted; survives `compose down`)
+
+### Server behind Caddy
+
+Assumes Caddy is already running on the host and exposes a shared external Docker network named `caddy-net`.
+
+```bash
+ssh <server>
+cd /home/ubuntu/stacks && git clone <repo-url> ai-proxy && cd ai-proxy
+cp .env.example .env                                  # fill in keys + SECURE_COOKIES=true
+docker compose -f compose.server.yml up --build -d
+```
+
+- Joins the `caddy-net` bridge; no host ports published (only Caddy sees the container)
+- Container name is `aiproxy`, so Caddy can `reverse_proxy aiproxy:8000`
+- SQLite lives in the named volume `aiproxy-data` (inspect with `docker volume inspect ai-proxy_aiproxy-data`)
+- `SECURE_COOKIES=true` is required so the session cookie carries the `Secure` flag behind HTTPS
+
+Example Caddy site (`/etc/caddy/sites/ai-proxy.caddy`):
+
+```caddy
+ai.example.com {
+    reverse_proxy aiproxy:8000
+    encode zstd gzip
+}
+```
+
+Caddy's `reverse_proxy` auto-upgrades WebSocket connections, so the dashboard's live-stream channels (`/dashboard/ws/*`) work without extra config.
+
+### Database performance
+
+SQLite is fine for this workload. The engine enables `WAL` + `synchronous=NORMAL` + `busy_timeout=10s` on every connection (`db/engine.py`), which gives you concurrent reads alongside a single writer and comfortably handles thousands of writes per second on SSD. The ceiling you should plan for:
+
+- **Writes**: ~50 req/s sustained is the practical limit before the writer becomes a bottleneck.
+- **DB size**: ~20 GB before VACUUM latency becomes annoying. Use the Settings tab's batch strip-binaries + Vacuum to stay under that.
+- **Workers**: keep `uvicorn --workers 1`. SQLite file locking and the in-memory StreamBus both assume a single process; scale with async concurrency instead.
+
+If you outgrow any of the above, the SQLAlchemy async layer is DB-agnostic — swap `DATABASE_URL` to Postgres (`postgresql+asyncpg://...`) and re-run migrations.
+
 ## Known limitations
 
 - **Single-node only.** StreamBus is in-memory; horizontal scaling would need Redis/NATS.
 - **No rate limiting per client key.** Add if/when needed.
 - **No retry endpoint.** You can't replay a request to the upstream from the dashboard (yet).
-- **SQLite WAL not configured.** Default journal mode; enable WAL in `db/engine.py` if write throughput becomes an issue.
 
 ## License
 

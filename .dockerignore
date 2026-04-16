@@ -1,0 +1,41 @@
+# VCS
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.py[cod]
+*.egg-info
+.venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+htmlcov
+
+# Local state
+.env
+.env.local
+*.db
+*.db-wal
+*.db-shm
+data/
+aiproxy.db*
+
+# Tests / docs / dev tooling (not needed in the image)
+tests/
+docs/
+scripts/
+.claude/
+CLAUDE.md
+README.md
+
+# Editor
+.idea
+.vscode
+.DS_Store
+
+# Build artefacts
+dist/
+build/
