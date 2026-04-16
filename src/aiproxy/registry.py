@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from aiproxy.bus import StreamBus
+from aiproxy.metrics import ACTIVE_REQUESTS
 
 ACTIVE_CHANNEL = "__active__"
 
@@ -50,6 +51,7 @@ class RequestRegistry:
 
     def start(self, meta: RequestMeta) -> None:
         self._active[meta.req_id] = meta
+        ACTIVE_REQUESTS.inc()
         self._bus.publish(ACTIVE_CHANNEL, {"type": "start", "req": meta.snapshot()})
 
     def update(self, req_id: str, **fields: Any) -> None:
@@ -64,6 +66,7 @@ class RequestRegistry:
         meta = self._active.pop(req_id, None)
         if meta is None:
             return
+        ACTIVE_REQUESTS.dec()
         for k, v in fields.items():
             setattr(meta, k, v)
         meta.finished_at = time.time()

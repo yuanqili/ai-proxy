@@ -1,0 +1,15 @@
+apiVersion: 1
+
+# Provisioned declaratively — overrides any matching UI-created datasource
+# with the same `name`. See docs/Deployment section in README for how this
+# file is mounted into the Grafana container on the server.
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+      httpMethod: POST

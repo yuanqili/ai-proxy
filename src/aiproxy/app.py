@@ -17,7 +17,7 @@ import logging
 from contextlib import asynccontextmanager
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from aiproxy.auth.proxy_auth import ApiKeyCache
@@ -31,6 +31,7 @@ from aiproxy.db.fts import install_fts_schema
 from aiproxy.db.migrate import backfill_request_traits, ensure_requests_columns
 from aiproxy.db.models import Base
 from aiproxy.db.retention import retention_loop
+from aiproxy.metrics import METRICS_CONTENT_TYPE, render_latest
 from aiproxy.pricing.seed import seed_pricing_if_empty
 from aiproxy.providers import build_registry
 from aiproxy.registry import RequestRegistry
@@ -98,6 +99,10 @@ def build_app(
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        return Response(content=render_latest(), media_type=METRICS_CONTENT_TYPE)
 
     return app
 
@@ -195,6 +200,10 @@ def create_app() -> FastAPI:
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/metrics")
+    async def metrics() -> Response:
+        return Response(content=render_latest(), media_type=METRICS_CONTENT_TYPE)
 
     return app
 

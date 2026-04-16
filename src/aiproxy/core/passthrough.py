@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from aiproxy.bus import StreamBus
 from aiproxy.core.headers import clean_downstream_headers, clean_upstream_headers
 from aiproxy.core.traits import detect_request_traits
+from aiproxy.metrics import record_completion
 
 
 def _normalize_labels(raw: str | None) -> str | None:
@@ -60,6 +61,8 @@ async def _finalize(
     registry: RequestRegistry,
     provider: Provider,
     req_id: str,
+    model: str | None,
+    started_at: float,
     final_status: str,
     status_code: int,
     resp_headers: dict[str, str],
@@ -159,6 +162,27 @@ async def _finalize(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cost_usd=cost_usd,
+    )
+
+    duration_s = now - started_at if started_at else None
+    ttft_s = (
+        first_chunk_at - upstream_sent_at
+        if (first_chunk_at is not None and upstream_sent_at is not None)
+        else None
+    )
+    record_completion(
+        provider=provider.name,
+        model=model,
+        status=final_status,
+        is_streaming=is_streaming,
+        duration_s=duration_s,
+        ttft_s=ttft_s,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cached_tokens=cached_tokens,
+        reasoning_tokens=reasoning_tokens,
+        cost_usd=cost_usd,
+        error_class=error_class,
     )
 
 
@@ -288,6 +312,15 @@ class PassthroughEngine:
             self._registry.finish(
                 req_id, status="error", error_class="upstream_connect", error_message=str(e)
             )
+            record_completion(
+                provider=provider.name, model=model, status="error",
+                is_streaming=is_streaming,
+                duration_s=time.time() - started_at,
+                ttft_s=None,
+                input_tokens=None, output_tokens=None,
+                cached_tokens=None, reasoning_tokens=None, cost_usd=None,
+                error_class="upstream_connect",
+            )
             raise
         except httpx.ReadTimeout as e:
             async with self._sessionmaker() as session:
@@ -301,6 +334,15 @@ class PassthroughEngine:
                 await session.commit()
             self._registry.finish(
                 req_id, status="error", error_class="upstream_timeout", error_message=str(e)
+            )
+            record_completion(
+                provider=provider.name, model=model, status="error",
+                is_streaming=is_streaming,
+                duration_s=time.time() - started_at,
+                ttft_s=None,
+                input_tokens=None, output_tokens=None,
+                cached_tokens=None, reasoning_tokens=None, cost_usd=None,
+                error_class="upstream_timeout",
             )
             raise
 
@@ -373,6 +415,8 @@ class PassthroughEngine:
                         registry=registry,
                         provider=provider,
                         req_id=req_id,
+                        model=model,
+                        started_at=started_at,
                         final_status=final_status,
                         status_code=upstream_resp.status_code,
                         resp_headers=dict(upstream_resp.headers),
