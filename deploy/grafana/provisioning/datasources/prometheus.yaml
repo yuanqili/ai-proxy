@@ -5,6 +5,7 @@ apiVersion: 1
 # file is mounted into the Grafana container on the server.
 datasources:
   - name: Prometheus
+    uid: prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090
