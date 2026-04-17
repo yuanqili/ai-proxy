@@ -268,6 +268,10 @@ ssh tencent-singapore 'cd /home/ubuntu/stacks/logs-stack && docker compose resta
 - **No rate limit on `/dashboard/login`.** Master key is 64-hex random so
   brute-force is impractical, but a shorter key would be a liability.
   Adding a simple per-IP counter is a future P1.
+- **No scheduled DB backup.** The Python recipe above is documented but
+  not wired into cron / a systemd timer, and there's no off-host copy.
+  A disk failure right now loses all request history. Wire it up when
+  historical data becomes load-bearing.
 - **No retry-request endpoint in dashboard.** Deferred from Phase 5.
 - **Prometheus + app are single-node.** Fine for self-hosted; if you ever
   horizontally scale, you'd need Redis/NATS for the StreamBus and a

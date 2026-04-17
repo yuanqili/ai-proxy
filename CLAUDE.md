@@ -426,6 +426,7 @@ Test conventions:
 - **Client API keys are plaintext in SQLite.** The `api_keys.key` column is not hashed; `GET /dashboard/api/keys` returns the full key. Treat `.db` backups like `.env`. Rotate by creating new + deactivating old, not by editing the existing row.
 - **No retry endpoint.** Deferred from Phase 5.
 - **Retention loop is time-based only** (strip bodies for requests older than the `full_count`-th most recent). No size-based cap.
+- **No automated DB backup.** `docs/operations.md` has a Python-stdlib backup recipe but it's not wired into cron / systemd-timer, and there's no off-host copy. A disk failure right now loses all request history.
 - **No Grafana alert contact point.** 3 alert rules are provisioned (`deploy/grafana/provisioning/alerting/aiproxy-rules.yaml`) but notification policies / Slack / email are not — add via Grafana UI when you want pages.
 - **Single-node only.** `StreamBus` is in-memory, so horizontal scaling would need Redis/NATS.
 
