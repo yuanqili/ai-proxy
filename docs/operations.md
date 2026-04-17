@@ -14,7 +14,7 @@ the same.
 |---|---|
 | Public API base | `https://ai.sat1600ap5.online` |
 | Dashboard | `https://ai.sat1600ap5.online/dashboard/` |
-| Metrics (Prometheus format) | `https://ai.sat1600ap5.online/metrics` |
+| Metrics (Prometheus format) | `aiproxy:8000/metrics` — internal only, external `/metrics` returns 404 via Caddy |
 | Grafana | `https://grafana.sat1600ap5.online` → folder `ai-proxy` |
 | Server | `ssh tencent-singapore` |
 | App stack dir | `/home/ubuntu/stacks/ai-proxy/` |
@@ -65,7 +65,9 @@ ssh tencent-singapore 'cd /home/ubuntu/stacks/ai-proxy && \
 
 # 4. Verify
 curl -sS https://ai.sat1600ap5.online/healthz        # → {"status":"ok"}
-curl -sS https://ai.sat1600ap5.online/metrics | head # → # HELP aiproxy_...
+# /metrics is 404 externally; scrape from inside the server or via Grafana:
+ssh tencent-singapore 'docker exec logs-stack-prometheus-1 \
+    wget -q -O - "http://localhost:9090/api/v1/targets" | head'
 ```
 
 ### Caddy
@@ -121,9 +123,16 @@ for:
   directory with `updateIntervalSeconds: 30` (edits go live within 30s, no
   restart).
 - `dashboards/aiproxy-overview.json` — 11-panel overview dashboard.
+- `alerting/aiproxy-rules.yaml` — 3 alert rules (instance down, high error
+  rate, slow p95). Rules appear in Grafana → Alerting → Alert rules under
+  folder `ai-proxy`. Contact points / notification policies are NOT
+  provisioned — configure Slack / email via the Grafana UI when you want
+  to receive pages.
 
 Prometheus already had `aiproxy` in its scrape config (`logs-stack/prometheus.yml`),
-so it picks up the `/metrics` endpoint automatically.
+so it picks up the `/metrics` endpoint automatically. Retention is pinned
+to 15 days via `--storage.tsdb.retention.time=15d` on the Prometheus
+service command.
 
 ### Updating the dashboard
 
@@ -259,21 +268,19 @@ ssh tencent-singapore 'cd /home/ubuntu/stacks/logs-stack && docker compose resta
 - **No rate limit on `/dashboard/login`.** Master key is 64-hex random so
   brute-force is impractical, but a shorter key would be a liability.
   Adding a simple per-IP counter is a future P1.
-- **`/metrics` reachable externally.** The Caddy rule forwards the whole
-  host to the container; there's no path exclusion for `/metrics`. Metrics
-  don't contain secrets, but hiding them would be tidier — add a
-  `handle /metrics* { respond 404 }` block *before* the `reverse_proxy`
-  line in `002-bollegecoard.caddy` if you care.
 - **No retry-request endpoint in dashboard.** Deferred from Phase 5.
 - **Prometheus + app are single-node.** Fine for self-hosted; if you ever
   horizontally scale, you'd need Redis/NATS for the StreamBus and a
   managed TSDB.
-- **Old `openai-proxy` stack directory** still at `/home/ubuntu/stacks/openai-proxy/`.
-  Containers are stopped. Safe to `rm -rf` after the new stack runs cleanly
-  for a week.
-- **Caddy site `001-bollegecoard-old.caddy`** now 502s for `sat1600ap5.online`
-  root (references the stopped `admin-ui`/`backend`). Disable with
-  `mv 001-bollegecoard-old.caddy{,.disabled} && docker exec caddy caddy reload --config /etc/caddy/Caddyfile`.
+- **No alert contact point provisioned.** The three alert rules in
+  `deploy/grafana/provisioning/alerting/aiproxy-rules.yaml` fire in
+  Grafana's Alerts UI but don't notify anyone until a Slack / email
+  contact point is wired via the Grafana UI and routed to the `ai-proxy`
+  folder. Add one when you're ready.
+- **Old `openai-proxy` stack archived at**
+  `/home/ubuntu/archives/openai-proxy-YYYY-MM-DD.tar.gz` (chmod 600).
+  The source dir at `/home/ubuntu/stacks/openai-proxy/` is inert — safe
+  to `rm -rf` whenever. The Caddy site is already `.disabled`.
 
 ## Secrets hygiene reminders
 

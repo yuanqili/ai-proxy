@@ -1,0 +1,129 @@
+apiVersion: 1
+
+# Provisioned declaratively alongside the Prometheus datasource + dashboard.
+# Each rule has two refs: A is the PromQL query, B is a threshold expression
+# that reads A. The rule fires when B evaluates true for the `for:` duration.
+#
+# Contact points and notification policies are NOT provisioned here — add
+# Slack / email via the Grafana UI. Rules still appear on the Alerts page
+# even without a contact point and will route through the default receiver.
+
+groups:
+  - orgId: 1
+    name: ai-proxy
+    folder: ai-proxy
+    interval: 1m
+    rules:
+      - uid: aiproxy-instance-down
+        title: ai-proxy instance is down
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: up{job="aiproxy"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        for: 2m
+        noDataState: Alerting
+        execErrState: Error
+        annotations:
+          summary: Prometheus scrape of aiproxy /metrics returned up==0 for 2m
+          runbook: Check container status on tencent-singapore with `docker ps --filter name=aiproxy`
+        labels:
+          severity: critical
+          service: ai-proxy
+
+      - uid: aiproxy-high-error-rate
+        title: ai-proxy error rate is elevated
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: sum(rate(aiproxy_errors_total[5m]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              conditions:
+                - evaluator: { type: gt, params: [0.5] }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: More than 0.5 proxy errors/sec for 5m (≈30 per minute)
+          description: Inspect /dashboard and grep container logs for upstream_connect / upstream_timeout / proxy_internal
+        labels:
+          severity: warning
+          service: ai-proxy
+
+      - uid: aiproxy-slow-p95-latency
+        title: ai-proxy p95 request latency is slow
+        condition: B
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              datasource: { type: prometheus, uid: prometheus }
+              expr: histogram_quantile(0.95, sum by (le) (rate(aiproxy_request_duration_seconds_bucket[5m])))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            relativeTimeRange: { from: 0, to: 0 }
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: threshold
+              expression: A
+              datasource: { type: __expr__, uid: __expr__ }
+              conditions:
+                - evaluator: { type: gt, params: [30] }
+                  operator: { type: and }
+                  query: { params: [B] }
+                  reducer: { type: last, params: [] }
+                  type: query
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: p95 request duration > 30s for 10m
+          description: Check upstream provider status pages; long tails often correlate with provider rate-limiting
+        labels:
+          severity: warning
+          service: ai-proxy

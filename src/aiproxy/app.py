@@ -32,6 +32,7 @@ from aiproxy.db.migrate import backfill_request_traits, ensure_requests_columns
 from aiproxy.db.models import Base
 from aiproxy.db.retention import retention_loop
 from aiproxy.metrics import METRICS_CONTENT_TYPE, render_latest
+from aiproxy.pricing.refresher import periodic_refresh
 from aiproxy.pricing.seed import seed_pricing_if_empty
 from aiproxy.providers import build_registry
 from aiproxy.registry import RequestRegistry
@@ -181,15 +182,20 @@ async def lifespan(app: FastAPI):
         get_full_count=_get_full_count,
         interval_seconds=60.0,
     ))
+    pricing_refresh_task = asyncio.create_task(
+        periodic_refresh(sessionmaker),
+        name="pricing-catalog-refresh",
+    )
 
     try:
         yield
     finally:
-        retention_task.cancel()
-        try:
-            await retention_task
-        except asyncio.CancelledError:
-            pass
+        for task in (retention_task, pricing_refresh_task):
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await http_client.aclose()
         await sql_engine.dispose()
 
