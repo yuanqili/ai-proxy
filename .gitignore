@@ -21,6 +21,12 @@ build/
 *.sqlite
 *.sqlite3
 *.db
+*.db-wal
+*.db-shm
+
+# Bootstrap secret drop (created by scripts/create_api_key.py when routed
+# through a server-side file — see docs/operations.md)
+.client-key
 
 # Coverage
 .coverage

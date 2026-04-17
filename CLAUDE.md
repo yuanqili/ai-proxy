@@ -72,6 +72,8 @@ Unlike LiteLLM / Helicone / Langfuse / Phoenix, which log requests after complet
 - **Request trait detection** (`core/traits.py`). At forward time, `detect_request_traits(req_body)` scans the JSON body once and returns three booleans — `request_has_image`, `request_has_file`, `response_is_json` — stored as nullable `Integer` columns on the `requests` row. Detection covers: OpenAI `image_url`/`input_image`/`file`/`input_file`, Anthropic `image`/`document`, the responses API `input` field, OpenAI/OpenRouter `response_format.{json_object,json_schema}`, and OpenAI/Anthropic `tools` (non-empty tools array implies structured JSON output). The dashboard list renders these as colored trait-icons (stream / image / file / json) slotted after each row's request id. **Version bump → full rescan**: `DETECTOR_VERSION` is compared against `config["traits.detector_version"]` on startup; if they differ, every row's flags are re-computed via `backfill_request_traits(rescan_all=True)` and the version is bumped. Otherwise only NULL-flagged rows are processed. Bump `DETECTOR_VERSION` in `core/traits.py` whenever you add or change a detection rule.
 - **Design-token CSS system** (`dashboard/static/index.html`). The `<style>` block defines a ~40-token palette in `:root` split into size/spacing/motion/radii tokens (theme-agnostic) and color tokens duplicated under `:root,[data-theme="dark"]` and `:root[data-theme="light"]`. Every component rule reads from tokens — no inline hex colors except a couple of `rgba()` shadow edge-cases. The three-state theme switch (light / dark / system) lives in the top nav; it persists preference to `localStorage["aiproxy.theme"]`, resolves "system" via `matchMedia("(prefers-color-scheme: dark)")`, and applies the resolved value via a `<head>`-inline pre-script to avoid FOUC on first paint.
 - **List pane UX**: infinite scroll via `IntersectionObserver` (sentinel `#req-list-sentinel` re-observed after each render, `rootMargin: 200px`, `inflightLoadMore` lock prevents concurrent fetches), and a draggable `#req-list-resizer` between list and detail that persists width to `localStorage["aiproxy.listPaneWidth"]` (clamped to [240, 720]). The "Load more" button is gone.
+- **SQLite pragmas on every connect** (`db/engine.py`). A sqlite-only `event.listen(engine.sync_engine, "connect", ...)` applies `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=10000`, `foreign_keys=ON` per-connection. WAL is a DB-file setting (persisted); the other three are per-connection and must re-apply. No-op on `:memory:` DBs so the test suite is unaffected.
+- **Prometheus metrics** (`src/aiproxy/metrics.py`). Seven metric families: `aiproxy_requests_total` / `aiproxy_request_duration_seconds` / `aiproxy_ttft_seconds` / `aiproxy_tokens_total` / `aiproxy_cost_usd_total` / `aiproxy_active_requests` / `aiproxy_errors_total`. Emission is centralized in `record_completion()` called from `_finalize` and from the two pre-stream error paths (`upstream_connect` / `upstream_timeout`). Active gauge inc/dec lives in `RequestRegistry.start/finish`. `GET /metrics` returns Prometheus text format, unauthenticated — meant for internal-network scrapes. **Never** label metrics with `X-AIProxy-Labels` values or `api_key_id`: user-supplied labels are unbounded and api_key_id would leak client identity into the metric namespace. Per-key and per-label breakdowns live on the SQLite side (`/dashboard/api/requests`).
 
 ## Project layout
 
@@ -82,6 +84,7 @@ src/aiproxy/
 ├── settings.py             pydantic-settings from .env
 ├── bus.py                  StreamBus — bounded-queue in-memory pub/sub
 ├── registry.py             RequestRegistry — active + recent meta + lifecycle events
+├── metrics.py              Prometheus counter/histogram/gauge + record_completion()
 │
 ├── auth/
 │   ├── proxy_auth.py       Client API-key validation (TTL cache over api_keys)
@@ -137,7 +140,22 @@ docs/superpowers/
     └── 2026-04-11-phase-5-polish.md
 
 docs/
+├── operations.md           Comprehensive deployment + ops runbook
 └── sessions/               Per-session retrospective logs
+
+deploy/
+└── grafana/
+    ├── README.md
+    └── provisioning/
+        ├── datasources/prometheus.yaml
+        └── dashboards/
+            ├── provider.yaml            file-based dashboard provider
+            └── aiproxy-overview.json    11-panel overview dashboard
+
+Dockerfile                  Multi-stage uv build → python:3.12-slim runtime
+.dockerignore
+compose.local.yml           Local bind-mount + 127.0.0.1:8000
+compose.server.yml          External caddy-net + named volume + SECURE_COOKIES
 
 scripts/
 ├── create_api_key.py       Bootstrap a client key into the DB
@@ -160,6 +178,8 @@ scripts/
 | Frontend | Vanilla JS + SVG in a single `index.html` | no framework, no build step, dead-simple deploy |
 | Packaging | [uv](https://github.com/astral-sh/uv) + hatchling | fast installs, reproducible |
 | Testing | pytest + pytest-asyncio + httpx.ASGITransport + respx | fully in-process, no live upstream |
+| Metrics | `prometheus-client` (default registry) | scraped at `/metrics`, rendered in Grafana |
+| Deploy | Docker (multi-stage uv build) + Caddy reverse proxy | one image, two compose files (local / server) |
 
 ## Providers
 
@@ -237,7 +257,14 @@ Single vanilla-JS SPA. Top-level tabs: **Requests · Timeline · Keys · Pricing
 | 4 | Replay Player: `/replay` endpoint, Player + JSON Log modes, live-follow, stateful SSE parser | ✅ |
 | 5 | Polish: Timeline tab, JSON export, Vacuum + DB stats, Overview error banner | ✅ |
 
-All phases merged to `main`. 234 tests passing, overall coverage ≈ 90%.
+All phases merged to `main`. 236 tests passing, overall coverage ≈ 90%.
+
+**Post-phase additions** (not a numbered phase, grouped under deployment + observability):
+- Docker packaging (`Dockerfile` + `compose.local.yml` + `compose.server.yml`)
+- SQLite WAL + pragmas on every connect
+- Prometheus `/metrics` endpoint with 7 metric families
+- Grafana file-based provisioning + 11-panel overview dashboard
+- Live at `https://ai.sat1600ap5.online` behind Caddy
 
 **Explicitly deferred** from Phase 5: the spec's optional "retry this request" button. Retry would introduce a second class of request (replayed vs. original) with unclear semantics around headers, auth rewriting, and timeline annotation. Revisit in a future phase if needed.
 
@@ -254,6 +281,80 @@ uv run python scripts/create_api_key.py --name "my-cli"
 ```
 
 Dashboard: http://127.0.0.1:8000/dashboard/ — log in with `PROXY_MASTER_KEY`.
+
+For a containerized local dev loop (identical to production image):
+
+```bash
+docker compose -f compose.local.yml up --build -d
+```
+
+## Production deployment (tencent-singapore)
+
+Live at **`https://ai.sat1600ap5.online`**. Server hostname (SSH alias): **`tencent-singapore`**. All stacks live under `/home/ubuntu/stacks/`. Four Docker Compose projects share two external bridge networks (`caddy-net`, `observability-net`) plus a third for the postgres tenant (`postgres-net`).
+
+### Stack layout on the server
+
+```
+/home/ubuntu/stacks/
+├── ai-proxy/              ← this repo, cloned from github.com/yuanqili/ai-proxy
+│   ├── .env               (chmod 600, not in git; holds all provider + proxy secrets)
+│   ├── compose.server.yml (brings up the aiproxy container)
+│   └── deploy/grafana/    (mounted into the Grafana container below)
+├── caddy/                 ← global reverse proxy + auto-HTTPS
+│   ├── docker-compose.yml
+│   ├── Caddyfile          (imports sites/*.caddy)
+│   └── sites/             (per-subdomain rules)
+├── logs-stack/            ← observability: Grafana + Prometheus + Loki + Promtail + cAdvisor + node-exporter
+│   ├── docker-compose.yml (patched to bind-mount ai-proxy/deploy/grafana/provisioning)
+│   ├── prometheus.yml     (scrape config — already has job aiproxy → aiproxy:8000/metrics)
+│   └── promtail.yml
+├── postgres/              ← pgvector (unrelated tenant: bollegecoard)
+└── openai-proxy/          ← DEPRECATED old stack, containers stopped, dir retained for ~1 week cool-down
+```
+
+### Docker networks
+
+| Network | Scope | Who's on it |
+|---|---|---|
+| `caddy-net` | external bridge | `caddy`, `aiproxy`, `prometheus` (scrapes aiproxy), `grafana` |
+| `observability-net` | internal to logs-stack | `grafana`, `prometheus`, `loki`, `promtail`, `cadvisor` |
+| `postgres-net` | external bridge | `postgres`, `grafana` (if ever wired), other tenants |
+
+### Caddy sites → upstream container mapping
+
+| Subdomain | Caddy rule file | Upstream |
+|---|---|---|
+| `ai.sat1600ap5.online` | `002-bollegecoard.caddy` | `aiproxy:8000` (this app) |
+| `grafana.sat1600ap5.online` | `003-logs-stack.caddy` | `grafana:3000` |
+| `promtail.sat1600ap5.online` | `003-logs-stack.caddy` | `promtail:9080` |
+| `sat1600ap5.online` (root) | `001-bollegecoard-old.caddy` | **DEPRECATED**: points at the stopped old stack, currently 502s. Safe to rename to `.disabled` and `docker exec caddy caddy reload`. |
+| `:80` and `:443` health | `000-health.caddy` | Built-in `respond /healthz 200 "ok"` |
+
+The `aiproxy` container alias on `caddy-net` comes from the service name in `compose.server.yml` — **don't rename it** or Caddy's `reverse_proxy aiproxy:8000` breaks.
+
+### Key operational facts
+
+- **Persistence**: SQLite lives in the Docker named volume `aiproxy-data` (mounted at `/app/data` inside the container). Survives `docker compose down`.
+- **Secrets provenance**: `PROXY_MASTER_KEY` and `SESSION_SECRET` are generated **on the server** with `openssl rand -hex 32` and never leave it. Provider API keys come from the laptop via `scp`.
+- **`/metrics` scraping**: Prometheus already has `job_name: aiproxy` in its static config; scrape interval 15s. No config change needed when redeploying ai-proxy as long as the service name stays `aiproxy`.
+- **Grafana provisioning**: the `logs-stack` compose has a bind-mount `/home/ubuntu/stacks/ai-proxy/deploy/grafana/provisioning → /etc/grafana/provisioning:ro`. Edit dashboard JSON in this repo → `git pull` on server → Grafana auto-reloads within 30 s (`updateIntervalSeconds: 30`).
+- **Datasource provisioning gotcha**: `deploy/grafana/provisioning/datasources/prometheus.yaml` pins `uid: prometheus` and declares `deleteDatasources` to wipe any stale UI-created "Prometheus" row. Without the delete block, Grafana crashes with "data source not found" during provisioning on an already-initialized instance.
+- **Log rotation**: `compose.server.yml` caps the aiproxy JSON-file log driver at `max-size=20m, max-file=5` (100 MB total). Promtail tails it into Loki.
+- **Workers**: `uvicorn --workers 1` on purpose — SQLite file locking and the in-memory `StreamBus` both require single-process.
+
+### Redeploy cycle
+
+```bash
+ssh tencent-singapore '
+  cd /home/ubuntu/stacks/ai-proxy && \
+  git pull && \
+  docker compose -f compose.server.yml up --build -d
+'
+```
+
+Incremental: src-only changes rebuild in ~20 s; dependency changes (pyproject.toml / uv.lock) ~3–5 min because the uv install layer re-runs.
+
+See **`docs/operations.md`** for the full runbook — first-time setup, Grafana bring-up, client onboarding, backup recipe, troubleshooting cheat sheet, and known gaps.
 
 ## Manual smoke tests
 
@@ -321,19 +422,25 @@ Test conventions:
 ## Known tech debt / open questions
 
 - **No rate limiting per client key.** Each key has unlimited throughput; add if/when needed.
+- **No rate limiting on `/dashboard/login`.** Master key is 64-hex random so brute force is impractical, but a shorter key would be a liability.
+- **`/metrics` reachable externally** at `https://ai.sat1600ap5.online/metrics`. Metrics don't carry secrets but tidier would be Caddy `handle /metrics* { respond 404 }` before `reverse_proxy`.
+- **Client API keys are plaintext in SQLite.** The `api_keys.key` column is not hashed; `GET /dashboard/api/keys` returns the full key. Treat `.db` backups like `.env`. Rotate by creating new + deactivating old, not by editing the existing row.
 - **No retry endpoint.** Deferred from Phase 5.
 - **Retention loop is time-based only** (strip bodies for requests older than the `full_count`-th most recent). No size-based cap.
 - **Pricing seed is static.** Admin has to add new models via the Pricing tab.
 - **Single-node only.** `StreamBus` is in-memory, so horizontal scaling would need Redis/NATS.
-- **SQLite WAL not explicitly configured.** Default journal mode; if write throughput becomes an issue, enable WAL in `db/engine.py`.
 
 ## Useful file pointers
 
-- Passthrough hot path — `src/aiproxy/core/passthrough.py:313` (`stream_and_persist`)
-- Dashboard router factory — `src/aiproxy/dashboard/routes.py:110`
+- Passthrough hot path — `src/aiproxy/core/passthrough.py` (`stream_and_persist`)
+- Dashboard router factory — `src/aiproxy/dashboard/routes.py` (`create_dashboard_router`)
 - Provider ABC — `src/aiproxy/providers/base.py`
 - Chunk parser implementations — `src/aiproxy/providers/openai.py`, `.../anthropic.py`
 - Trait detector + DETECTOR_VERSION — `src/aiproxy/core/traits.py`
 - Migration + trait backfill — `src/aiproxy/db/migrate.py`
+- Prometheus metrics + `record_completion()` — `src/aiproxy/metrics.py`
+- SQLite pragma listener — `src/aiproxy/db/engine.py` (`_apply_sqlite_pragmas`)
+- Grafana dashboard JSON — `deploy/grafana/provisioning/dashboards/aiproxy-overview.json`
 - Frontend entry — `src/aiproxy/dashboard/static/index.html`
 - Design spec — `docs/superpowers/specs/2026-04-10-ai-proxy-with-live-dashboard-design.md`
+- Operations runbook — `docs/operations.md`

@@ -356,6 +356,8 @@ uv run python scripts/test_all.py   # hits all 3 providers, prints TTFT + cost
 
 Two Compose files ship with the repo — one for local Docker, one for a server behind Caddy. Both use the same `Dockerfile` (multi-stage `uv` build, non-root runtime, healthcheck).
 
+For the full runbook — server specifics, Grafana provisioning, client onboarding, backup strategy, and troubleshooting — see [`docs/operations.md`](docs/operations.md).
+
 ### Local Docker
 
 ```bash
